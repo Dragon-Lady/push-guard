@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "push-guard"
+version = "0.1.0"
+description = "Local pre-push guard for likely secret leaks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Push Guard contributors" }]
+keywords = ["git", "pre-push", "secrets", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.scripts]
+push-guard = "push_guard.guard:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
