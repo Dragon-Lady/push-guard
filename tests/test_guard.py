@@ -1,8 +1,10 @@
 import unittest
 from io import StringIO
+from pathlib import Path
+from subprocess import CalledProcessError, CompletedProcess
 from unittest.mock import patch
 
-from push_guard.guard import _scan_diff, main, scan_text_for_secrets
+from push_guard.guard import _resolve_git_root, _scan_diff, main, scan_text_for_secrets
 
 
 class PushGuardTests(unittest.TestCase):
@@ -103,6 +105,68 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual(1, len(findings))
         self.assertEqual("config.py", findings[0].path)
         self.assertEqual(12, findings[0].line)
+
+    def test_resolve_git_root_canonicalizes_nested_repo_path(self):
+        nested = Path("C:/Users/tanya/dragoneye")
+        root = "C:/Users/tanya"
+
+        with patch(
+            "push_guard.guard.subprocess.run",
+            return_value=CompletedProcess(
+                args=["git"],
+                returncode=0,
+                stdout=f"{root}\n",
+                stderr="",
+            ),
+        ) as run:
+            resolved = _resolve_git_root(nested)
+
+        self.assertEqual(Path(root), resolved)
+        run.assert_called_once_with(
+            [
+                "git",
+                "-c",
+                f"safe.directory={nested}",
+                "-C",
+                str(nested),
+                "rev-parse",
+                "--show-toplevel",
+            ],
+            check=True,
+            text=True,
+            stdout=-1,
+            stderr=-1,
+        )
+
+    def test_resolve_git_root_retries_dubious_ownership_root(self):
+        nested = Path("C:/Users/tanya/dragoneye")
+        root = Path("C:/Users/tanya")
+        dubious = CalledProcessError(
+            returncode=128,
+            cmd=["git"],
+            stderr=(
+                "fatal: detected dubious ownership in repository at "
+                "'C:/Users/tanya'\n"
+            ),
+        )
+
+        with patch(
+            "push_guard.guard.subprocess.run",
+            side_effect=[
+                dubious,
+                CompletedProcess(
+                    args=["git"],
+                    returncode=0,
+                    stdout=f"{root}\n",
+                    stderr="",
+                ),
+            ],
+        ) as run:
+            resolved = _resolve_git_root(nested)
+
+        self.assertEqual(root, resolved)
+        self.assertEqual(2, run.call_count)
+        self.assertIn(f"safe.directory={root}", run.call_args_list[1].args[0])
 
     def test_main_blocks_and_reports_redacted_findings(self):
         secret = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
