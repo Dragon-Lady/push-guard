@@ -75,7 +75,7 @@ def scan_text_for_secrets(text: str, path: str = "<text>") -> list[SecretFinding
 
 
 def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
-    repo_path = Path(repo)
+    repo_path = _resolve_git_root(Path(repo))
     findings: list[SecretFinding] = []
     for _local_ref, local_sha, _remote_ref, remote_sha in _parse_pre_push(stdin_text):
         if local_sha == ZERO_SHA:
@@ -231,10 +231,62 @@ def _parse_hunk_new_line(line: str) -> int:
     return int(match.group(1))
 
 
+def _resolve_git_root(repo: Path) -> Path:
+    try:
+        completed = _run_rev_parse_show_toplevel(repo, repo)
+    except subprocess.CalledProcessError as exc:
+        dubious_root = _parse_dubious_ownership_root(exc.stderr)
+        if dubious_root:
+            try:
+                completed = _run_rev_parse_show_toplevel(repo, dubious_root)
+            except subprocess.CalledProcessError as retry_exc:
+                raise _git_inspection_error(
+                    "git rev-parse --show-toplevel", retry_exc
+                ) from retry_exc
+        else:
+            raise _git_inspection_error("git rev-parse --show-toplevel", exc) from exc
+
+    root = completed.stdout.strip()
+    if not root:
+        raise PushGuardInspectionError("git rev-parse --show-toplevel returned no path")
+    return Path(root)
+
+
+def _run_rev_parse_show_toplevel(
+    repo: Path, safe_directory: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _git_command(repo, ["rev-parse", "--show-toplevel"], safe_directory),
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _git_inspection_error(
+    command: str, exc: subprocess.CalledProcessError
+) -> PushGuardInspectionError:
+    stderr = _first_stderr_line(exc.stderr)
+    detail = f": {stderr}" if stderr else ""
+    return PushGuardInspectionError(
+        f"{command} failed with exit {exc.returncode}{detail}"
+    )
+
+
+def _parse_dubious_ownership_root(stderr: str | None) -> Path | None:
+    if not stderr or "dubious ownership" not in stderr:
+        return None
+    match = re.search(r"repository at '([^']+)'", stderr)
+    if not match:
+        return None
+    return Path(match.group(1))
+
+
 def _run_git(repo: Path, args: list[str]) -> str:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(repo), *args],
+            _git_command(repo, args, repo),
             check=True,
             text=True,
             stdout=subprocess.PIPE,
@@ -247,6 +299,17 @@ def _run_git(repo: Path, args: list[str]) -> str:
             f"git {' '.join(args)} failed with exit {exc.returncode}{detail}"
         ) from exc
     return completed.stdout
+
+
+def _git_command(repo: Path, args: list[str], safe_directory: Path) -> list[str]:
+    return [
+        "git",
+        "-c",
+        f"safe.directory={safe_directory}",
+        "-C",
+        str(repo),
+        *args,
+    ]
 
 
 def _first_stderr_line(stderr: str | None) -> str:
