@@ -287,3 +287,27 @@ class PushGuardTests(unittest.TestCase):
                 install_pre_push_hook(repo)
 
             self.assertEqual("#!/bin/sh\necho existing\n", hook.read_text())
+
+    def test_install_pre_push_hook_refuses_home_repo_by_default(self):
+        home = Path.home()
+
+        with (
+            patch("push_guard.guard._resolve_git_root", return_value=home),
+            self.assertRaises(RuntimeError) as raised,
+        ):
+            install_pre_push_hook(home)
+
+        self.assertIn("home directory", str(raised.exception))
+
+    def test_install_pre_push_hook_allows_home_repo_when_explicit(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".git" / "hooks").mkdir(parents=True)
+
+            with (
+                patch("push_guard.guard.Path.home", return_value=repo),
+                patch("push_guard.guard._resolve_git_root", return_value=repo),
+            ):
+                hook = install_pre_push_hook(repo, allow_home_repo=True)
+
+            self.assertTrue(hook.exists())

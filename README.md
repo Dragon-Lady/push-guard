@@ -52,11 +52,22 @@ pip install push-guard
 
 Install per repository. Do not install globally.
 
-From the repository you want to protect:
+From the specific repository you want to protect:
 
 ```sh
+cd /path/to/that/repo
 push-guard install
 ```
+
+Or pass the repository path explicitly:
+
+```sh
+push-guard install --repo /path/to/that/repo
+```
+
+Push Guard refuses to install into your user home directory by default, even if
+your home directory is itself a Git repository. Use `--allow-home-repo` only when
+you intentionally want one broad hook at the home-repo level.
 
 If a `pre-push` hook already exists, Push Guard refuses to overwrite it. Preserve
 and chain existing hooks intentionally, or rerun with `--force` only when you are
