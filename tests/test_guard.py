@@ -2,9 +2,16 @@ import unittest
 from io import StringIO
 from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from push_guard.guard import _resolve_git_root, _scan_diff, main, scan_text_for_secrets
+from push_guard.guard import (
+    _resolve_git_root,
+    _scan_diff,
+    install_pre_push_hook,
+    main,
+    scan_text_for_secrets,
+)
 
 
 class PushGuardTests(unittest.TestCase):
@@ -251,3 +258,32 @@ class PushGuardTests(unittest.TestCase):
         self.assertIn("could not inspect this push", output)
         self.assertIn("Blocking push because inspection failed", output)
         self.assertNotIn("Traceback", output)
+
+    def test_install_pre_push_hook_writes_local_hook(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".git" / "hooks").mkdir(parents=True)
+
+            with patch("push_guard.guard._resolve_git_root", return_value=repo):
+                hook = install_pre_push_hook(repo)
+
+            self.assertEqual(repo / ".git" / "hooks" / "pre-push", hook)
+            body = hook.read_text(encoding="utf-8")
+            self.assertIn("python -m push_guard", body)
+            self.assertIn("--repo", body)
+
+    def test_install_pre_push_hook_refuses_unmanaged_existing_hook(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            hook_dir = repo / ".git" / "hooks"
+            hook_dir.mkdir(parents=True)
+            hook = hook_dir / "pre-push"
+            hook.write_text("#!/bin/sh\necho existing\n", encoding="utf-8")
+
+            with (
+                patch("push_guard.guard._resolve_git_root", return_value=repo),
+                self.assertRaises(RuntimeError),
+            ):
+                install_pre_push_hook(repo)
+
+            self.assertEqual("#!/bin/sh\necho existing\n", hook.read_text())
