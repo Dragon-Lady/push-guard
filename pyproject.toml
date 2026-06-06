@@ -9,17 +9,21 @@ description = "Local pre-push guard for likely secret leaks."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-authors = [{ name = "Push Guard contributors" }]
-keywords = ["git", "pre-push", "secrets", "security"]
+authors = [{ name = "Dragon Lady" }]
+keywords = ["git", "pre-push", "secrets", "security", "credentials", "developer-tools"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Topic :: Security",
     "Topic :: Software Development :: Version Control :: Git",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Dragon-Lady/push-guard"
+Repository = "https://github.com/Dragon-Lady/push-guard"
+Issues = "https://github.com/Dragon-Lady/push-guard/issues"
 
 [project.scripts]
 push-guard = "push_guard.guard:main"

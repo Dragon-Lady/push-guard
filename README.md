@@ -5,6 +5,8 @@ Push Guard is a local Git `pre-push` guard for likely secret leaks.
 It scans the content being pushed, reports likely secret patterns, redacts all
 matched values, and exits nonzero so Git blocks the push.
 
+> Built and maintained by Dragon Lady - [github.com/Dragon-Lady](https://github.com/Dragon-Lady) - X: [@answerislove2](https://x.com/answerislove2)
+
 ## Posture
 
 - Local only.
@@ -35,22 +37,37 @@ matched values.
 - OpenAI-style `sk-...` tokens
 - AWS access key IDs: `AKIA...` / `ASIA...`
 - private key block markers
-- generic long `api_key`, `token`, `secret`, or `password` assignments
+- generic long `api_key`, `token`, `secret`, or `password` assignments,
+  including underscore/dash-delimited names such as `AWS_SECRET_ACCESS_KEY`
 
 All evidence is redacted as `<redacted>`.
+
+## Install
+
+```sh
+pip install push-guard
+```
 
 ## Install A Repo Hook
 
 Install per repository. Do not install globally.
 
-Create `.git/hooks/pre-push` in the target repository:
+From the repository you want to protect:
+
+```sh
+push-guard install
+```
+
+If a `pre-push` hook already exists, Push Guard refuses to overwrite it. Preserve
+and chain existing hooks intentionally, or rerun with `--force` only when you are
+refreshing a Push Guard-managed hook.
+
+Manual hook body, for teams that prefer to wire hooks themselves:
 
 ```sh
 #!/bin/sh
 exec python -m push_guard --repo "$(git rev-parse --show-toplevel)"
 ```
-
-If a `pre-push` hook already exists, preserve and chain it intentionally.
 
 ## Run Manually
 
@@ -67,9 +84,6 @@ python -m push_guard --repo /path/to/repo
 - Long non-secret identifiers in assignments such as
   `secret = mySuperLongFunctionCallHereWithNoSpaces` can match the generic
   assignment rule.
-- Compound underscored names such as `AWS_SECRET_ACCESS_KEY` are not matched by
-  the generic keyword boundary. Prefix-specific rules can still catch known
-  token formats such as `AKIA...` / `ASIA...`.
 - If a hook is installed from a Git subdirectory, Git may resolve `--repo` to a
   parent repository root. This is acceptable for current diff-only scanning, but
   future path-relative features such as allowlists or report output must resolve

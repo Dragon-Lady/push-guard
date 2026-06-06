@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -104,6 +105,19 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "install":
+        return _install_main(argv[1:])
+    if argv and argv[0] in {"-h", "--help"}:
+        _print_help()
+        return 0
+
+    # Backward-compatible pre-push mode. Existing hooks call:
+    #   python -m push_guard --repo "$(git rev-parse --show-toplevel)"
+    return _pre_push_main(argv)
+
+
+def _pre_push_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="push-guard",
         description="Local pre-push secret guard. Blocks likely secret pushes.",
@@ -137,6 +151,76 @@ def main(argv: list[str] | None = None) -> int:
         )
     print("Review locally, remove or rotate the secret, then retry.", file=sys.stderr)
     return 1
+
+
+def _install_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="push-guard install",
+        description="Install Push Guard as this repository's local pre-push hook.",
+    )
+    parser.add_argument(
+        "--repo",
+        default=".",
+        help="Repository path. Defaults to current directory.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing Push Guard-managed pre-push hook.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        hook_path = install_pre_push_hook(args.repo, force=args.force)
+    except RuntimeError as exc:
+        print(f"Push Guard install failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Push Guard installed: {hook_path}")
+    return 0
+
+
+def install_pre_push_hook(repo: str | Path = ".", *, force: bool = False) -> Path:
+    repo_path = _resolve_git_root(Path(repo))
+    hook_dir = repo_path / ".git" / "hooks"
+    hook_path = hook_dir / "pre-push"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_body = _hook_body()
+    if hook_path.exists():
+        existing = hook_path.read_text(encoding="utf-8", errors="replace")
+        if existing == hook_body:
+            return hook_path
+        if "push_guard" not in existing and "push-guard" not in existing:
+            raise RuntimeError(
+                f"{hook_path} already exists. Chain it manually or rerun with --force."
+            )
+        if not force:
+            raise RuntimeError(
+                f"{hook_path} already exists. Rerun with --force to refresh it."
+            )
+
+    hook_path.write_text(hook_body, encoding="utf-8", newline="\n")
+    if os.name != "nt":
+        hook_path.chmod(0o755)
+    return hook_path
+
+
+def _hook_body() -> str:
+    return (
+        "#!/bin/sh\n"
+        "# Installed by Push Guard. Local only; no network calls.\n"
+        'exec python -m push_guard --repo "$(git rev-parse --show-toplevel)"\n'
+    )
+
+
+def _print_help() -> None:
+    print(
+        "usage: push-guard [--repo REPO]\n"
+        "       push-guard install [--repo REPO] [--force]\n\n"
+        "Local pre-push secret guard. Run from a Git pre-push hook, or install\n"
+        "the hook with `push-guard install`."
+    )
 
 
 def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
