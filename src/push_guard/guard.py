@@ -20,36 +20,53 @@ PLACEHOLDER_WORDS = {
     "your",
 }
 
+# Each entry: (rule_id, pattern, reason, high_confidence)
+# high_confidence == True means the match is a provider-specific token *shape*
+# (ghp_, github_pat_, sk-, AKIA/ASIA). A value matching one of these is a real
+# secret even if it happens to contain a word like "test" or "your", so the
+# placeholder filter MUST NOT suppress it. Only low-confidence/structural
+# markers honor the placeholder filter.
 SECRET_PATTERNS = [
     (
         "secret.github_fine_grained_token",
         re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
         "GitHub fine-grained token pattern",
+        True,
     ),
     (
         "secret.github_token",
         re.compile(r"gh[pousr]_[A-Za-z0-9_]{20,}"),
         "GitHub token pattern",
+        True,
     ),
     (
         "secret.openai_token",
         re.compile(r"sk-[A-Za-z0-9]{20,}"),
         "OpenAI-style token pattern",
+        True,
     ),
     (
         "secret.aws_access_key",
         re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
         "AWS access key pattern",
+        True,
     ),
     (
         "secret.private_key",
         re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
         "Private key block marker",
+        False,
     ),
 ]
 
+# Keyword may be embedded in an underscore/dash-delimited identifier so that
+# names like AWS_SECRET_ACCESS_KEY or CLIENT_SECRET_TOKEN are matched, not just
+# bare `secret=`. The negative lookbehind keeps the keyword on a real boundary
+# (start, space, `_`, `-`) instead of matching inside an unrelated word.
 GENERIC_ASSIGNMENT = re.compile(
-    r"(?i)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)\b"
+    r"(?i)(?<![A-Za-z0-9])"
+    r"(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd|pwd)"
+    r"(?:[_-][A-Za-z0-9]+)*"
     r"\s*[:=]\s*['\"]?([^'\"\s]{20,})"
 )
 
@@ -125,9 +142,12 @@ def main(argv: list[str] | None = None) -> int:
 def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
 
-    for rule_id, pattern, reason in SECRET_PATTERNS:
+    for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
         for match in pattern.finditer(line):
-            if _looks_like_placeholder(match.group(0)):
+            # High-confidence provider token shapes are never suppressed by a
+            # placeholder word — a real ghp_/sk-/AKIA value that merely contains
+            # "test" or "your" is still a real secret and must be caught.
+            if not high_confidence and _looks_like_placeholder(match.group(0)):
                 continue
             findings.append(
                 SecretFinding(
@@ -139,24 +159,58 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
                 )
             )
 
-    match = GENERIC_ASSIGNMENT.search(line)
-    if match and not _looks_like_placeholder(match.group(1)):
-        findings.append(
-            SecretFinding(
-                rule_id="secret.generic_assignment",
-                path=path,
-                line=line_number,
-                reason="High-entropy-looking secret assignment",
-                evidence="<redacted>",
+    # Only consider the lower-confidence generic-assignment rule when no
+    # specific token already matched this line. This avoids double-reporting a
+    # single leak (e.g. OPENAI_API_KEY=sk-...) while still catching secrets that
+    # only the generic rule can see (e.g. a 40-char AWS *secret* in
+    # AWS_SECRET_ACCESS_KEY=..., which has no provider prefix).
+    if not findings:
+        match = GENERIC_ASSIGNMENT.search(line)
+        if match and not _value_is_placeholder(match.group(1)):
+            findings.append(
+                SecretFinding(
+                    rule_id="secret.generic_assignment",
+                    path=path,
+                    line=line_number,
+                    reason="High-entropy-looking secret assignment",
+                    evidence="<redacted>",
+                )
             )
-        )
 
     return findings
 
 
 def _looks_like_placeholder(value: str) -> bool:
+    """Substring check, used only for low-confidence/structural markers."""
     lowered = value.lower()
     return any(word in lowered for word in PLACEHOLDER_WORDS)
+
+
+def _value_is_placeholder(value: str) -> bool:
+    """True only when an assigned value is *dominated* by placeholder text.
+
+    The earlier behaviour skipped any value that merely *contained* a
+    placeholder word (e.g. a real secret embedding "test"), which silently let
+    secrets through. Now a value counts as a placeholder only when it is an
+    obvious dummy shape, stacks two or more placeholder words, or is left with
+    almost nothing real after the placeholder words are removed. This biases a
+    pre-push seatbelt toward blocking — a verbose dummy may be flagged for
+    review, but a real secret with an embedded common word is no longer missed.
+    """
+    lowered = value.lower()
+    # Bracketed dummies (<your-token>, [REDACTED]) or filler runs (xxxxxxxx).
+    if re.fullmatch(r"[<\[{(].*[>\]})]", value):
+        return True
+    if re.fullmatch(r"[x*._\-]{8,}", lowered):
+        return True
+    present = [word for word in PLACEHOLDER_WORDS if word in lowered]
+    if len(present) >= 2:
+        return True
+    residue = lowered
+    for word in present:
+        residue = residue.replace(word, "")
+    residue = re.sub(r"[^a-z0-9]", "", residue)
+    return len(residue) < 8
 
 
 def _parse_pre_push(stdin_text: str) -> list[tuple[str, str, str, str]]:
@@ -259,6 +313,8 @@ def _run_rev_parse_show_toplevel(
         _git_command(repo, ["rev-parse", "--show-toplevel"], safe_directory),
         check=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -289,6 +345,8 @@ def _run_git(repo: Path, args: list[str]) -> str:
             _git_command(repo, args, repo),
             check=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
