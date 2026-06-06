@@ -168,10 +168,19 @@ def _install_main(argv: list[str]) -> int:
         action="store_true",
         help="Replace an existing Push Guard-managed pre-push hook.",
     )
+    parser.add_argument(
+        "--allow-home-repo",
+        action="store_true",
+        help="Allow installing into the user home directory if it is a Git repo.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        hook_path = install_pre_push_hook(args.repo, force=args.force)
+        hook_path = install_pre_push_hook(
+            args.repo,
+            force=args.force,
+            allow_home_repo=args.allow_home_repo,
+        )
     except RuntimeError as exc:
         print(f"Push Guard install failed: {exc}", file=sys.stderr)
         return 1
@@ -180,8 +189,19 @@ def _install_main(argv: list[str]) -> int:
     return 0
 
 
-def install_pre_push_hook(repo: str | Path = ".", *, force: bool = False) -> Path:
+def install_pre_push_hook(
+    repo: str | Path = ".",
+    *,
+    force: bool = False,
+    allow_home_repo: bool = False,
+) -> Path:
     repo_path = _resolve_git_root(Path(repo))
+    if not allow_home_repo and repo_path == Path.home():
+        raise RuntimeError(
+            f"Refusing to install into your home directory Git repo ({repo_path}). "
+            "Run from the specific project repo or pass --repo C:\\path\\to\\repo. "
+            "Use --allow-home-repo only if you intentionally want this broad hook."
+        )
     hook_dir = repo_path / ".git" / "hooks"
     hook_path = hook_dir / "pre-push"
     hook_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +237,7 @@ def _hook_body() -> str:
 def _print_help() -> None:
     print(
         "usage: push-guard [--repo REPO]\n"
-        "       push-guard install [--repo REPO] [--force]\n\n"
+        "       push-guard install [--repo REPO] [--force] [--allow-home-repo]\n\n"
         "Local pre-push secret guard. Run from a Git pre-push hook, or install\n"
         "the hook with `push-guard install`."
     )
