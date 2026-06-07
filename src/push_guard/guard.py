@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import re
 import subprocess
@@ -141,6 +142,88 @@ HADES_PYPI_PATTERNS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Private-path rules.
+#
+# A second, path-based dimension: block a push that *introduces a file whose
+# path* should never leave the machine -- private handoff lanes, agent/team
+# notes, credential vaults -- even when the file body holds no secret pattern.
+# This is the guard against the failure mode where internal material is staged
+# into a repo by mistake (or by a misbehaving automation) and the content
+# scanner sees nothing token-shaped to flag.
+#
+# Defaults below are GENERIC and project-neutral on purpose: no organization,
+# person, or codename appears here, so this source stays safe to publish.
+# Project-specific patterns (private directory names, internal doc prefixes)
+# load from an optional, git-ignored config file at the repo root --
+# `.push-guard-private-paths`, one glob per line, `#` for comments. Keep that
+# file local so the private names themselves never get committed or pushed.
+# Basename-style globs: matched against each file's basename at any depth, so a
+# root-level `family_keys.json` and a nested `secrets/family_keys.json` both hit.
+PRIVATE_PATH_DEFAULTS = [
+    "*.kdbx",
+    "*.pem",
+    "id_rsa",
+    "id_ed25519",
+    ".env",
+    ".env.*",
+    "*_keys.json",
+    "credentials.json",
+    ".npmrc",
+]
+
+PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
+
+
+def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
+    """Generic defaults plus any patterns from the local, git-ignored config."""
+    patterns = list(PRIVATE_PATH_DEFAULTS)
+    try:
+        config = Path(repo) / PRIVATE_PATHS_CONFIG
+        text = config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return patterns
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    return patterns
+
+
+def path_matches_private(path: str, patterns: list[str]) -> str | None:
+    """Return the matched pattern, or None. Simplified gitignore-style match.
+
+    - A trailing-slash pattern (`notes/`) matches that directory anywhere in the
+      path.
+    - A glob pattern (`*MEMORY.md`, `**/*.pem`) is matched against the full
+      normalized path and against the basename.
+    - A plain token is matched as an exact basename or a path segment.
+    """
+    normalized = path.replace("\\", "/").lstrip("/")
+    basename = normalized.rsplit("/", 1)[-1]
+    segments = normalized.split("/")
+    for pattern in patterns:
+        pat = pattern.replace("\\", "/").strip()
+        if not pat:
+            continue
+        if pat.endswith("/"):
+            directory = pat[:-1].lstrip("/")
+            if directory and directory in segments[:-1]:
+                return pattern
+            continue
+        if any(ch in pat for ch in "*?["):
+            if (
+                fnmatch.fnmatch(normalized, pat)
+                or fnmatch.fnmatch(normalized, f"*/{pat}")
+                or fnmatch.fnmatch(basename, pat)
+            ):
+                return pattern
+            continue
+        if pat == basename or pat in segments:
+            return pattern
+    return None
+
+
 @dataclass(frozen=True)
 class SecretFinding:
     rule_id: str
@@ -163,13 +246,51 @@ def scan_text_for_secrets(text: str, path: str = "<text>") -> list[SecretFinding
 
 def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
     repo_path = _resolve_git_root(Path(repo))
+    private_patterns = load_private_path_patterns(repo_path)
     findings: list[SecretFinding] = []
+    seen_path_shas: set[str] = set()
     for _local_ref, local_sha, _remote_ref, remote_sha in _parse_pre_push(stdin_text):
         if local_sha == ZERO_SHA:
             continue
         diffs = _diffs_for_push_ref(repo_path, local_sha, remote_sha)
         for diff_text in diffs:
             findings.extend(_scan_diff(diff_text))
+        if local_sha not in seen_path_shas:
+            seen_path_shas.add(local_sha)
+            findings.extend(
+                _scan_tree_for_private_paths(repo_path, local_sha, private_patterns)
+            )
+    return findings
+
+
+def _scan_tree_for_private_paths(
+    repo: Path, local_sha: str, patterns: list[str]
+) -> list[SecretFinding]:
+    """Flag any file in the pushed tree whose path is private/internal.
+
+    Uses the tip tree (not the diff) so a private file that should never have
+    been tracked is caught on every push until it is removed -- not only on the
+    commit that introduced it.
+    """
+    if not patterns:
+        return []
+    tree = _run_git(repo, ["ls-tree", "-r", "--name-only", local_sha])
+    findings: list[SecretFinding] = []
+    for path in tree.splitlines():
+        path = path.strip()
+        if not path:
+            continue
+        matched = path_matches_private(path, patterns)
+        if matched:
+            findings.append(
+                SecretFinding(
+                    rule_id="private_path.match",
+                    path=path,
+                    line=0,
+                    reason=f"Private/internal path (pattern: {matched})",
+                    evidence="<redacted>",
+                )
+            )
     return findings
 
 
@@ -210,15 +331,29 @@ def _pre_push_main(argv: list[str]) -> int:
     if not findings:
         return 0
 
+    has_private_path = any(f.rule_id.startswith("private_path.") for f in findings)
+    has_secret = any(not f.rule_id.startswith("private_path.") for f in findings)
+    if has_private_path and has_secret:
+        kind = "Secret or private material matched."
+    elif has_private_path:
+        kind = "Private/internal file path matched."
+    else:
+        kind = "Likely secret material matched."
+
     print("Push Guard blocked this push.", file=sys.stderr)
-    print("Likely secret material matched. Values are redacted.", file=sys.stderr)
+    print(f"{kind} Secret values are redacted.", file=sys.stderr)
     for finding in findings:
+        line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {finding.path}:{finding.line} "
+            f"- {finding.rule_id} at {finding.path}{line_suffix} "
             f"({finding.reason}; {finding.evidence})",
             file=sys.stderr,
         )
-    print("Review locally, remove or rotate the secret, then retry.", file=sys.stderr)
+    print(
+        "Review locally: untrack the private file, or remove/rotate the secret, "
+        "then retry.",
+        file=sys.stderr,
+    )
     return 1
 
 
