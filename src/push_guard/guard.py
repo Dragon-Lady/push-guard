@@ -101,6 +101,45 @@ SHAI_HULUD_SSH_PATTERNS = [
     ),
 ]
 
+HADES_PYPI_PATTERNS = [
+    (
+        "workflow.hades_pypi_bun_download",
+        re.compile(r"oven-sh/bun/releases/download|bun-v\d+\.\d+\.\d+", re.I),  # push-guard: ignore
+        "Hades/Miasma PyPI Bun runtime bootstrap marker",
+    ),
+    (
+        "workflow.hades_pypi_bun_sentinel",
+        re.compile(r"\.bun_ran\b", re.I),  # push-guard: ignore
+        "Hades/Miasma PyPI Bun startup sentinel",
+    ),
+    (
+        "workflow.hades_anthropic_camouflage",
+        re.compile(r"api\.anthropic\.com/v1/api", re.I),  # push-guard: ignore
+        "Hades/Miasma Anthropic-host camouflage endpoint",
+    ),
+    (
+        "workflow.hades_github_exfil_marker",
+        re.compile(
+            r"Hades - The End for the Damned|"  # push-guard: ignore
+            r"IfYouYankThisTokenItWillNukeTheComputerOfTheOwnerFully|"  # push-guard: ignore
+            r"results/results-[^\"'\s]*\.json|"  # push-guard: ignore
+            r"\bformat-results\b|"  # push-guard: ignore
+            r"\bRun Copilot\b",  # push-guard: ignore
+            re.I,
+        ),  # push-guard: ignore
+        "Hades/Miasma GitHub or Actions exfiltration marker",
+    ),
+    (
+        "workflow.hades_github_token_monitor",
+        re.compile(
+            r"gh-token-monitor|GitHub Commit Monitor|"  # push-guard: ignore
+            r"gh-token-monitor\.service|com\.github\.token-monitor\.plist",  # push-guard: ignore
+            re.I,
+        ),  # push-guard: ignore
+        "Hades/Miasma GitHub token-monitor persistence marker",
+    ),
+]
+
 
 @dataclass(frozen=True)
 class SecretFinding:
@@ -316,6 +355,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
             )
 
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
+    findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
 
     return findings
 
@@ -353,6 +393,56 @@ def _scan_line_for_workflow_compromise(
                 evidence="<redacted>",
             )
         )
+
+    return findings
+
+
+def _scan_line_for_hades_pypi(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+
+    is_pth = lowered_path.endswith(".pth")
+    is_code_or_workflow = is_pth or _is_workflow_or_script_path(normalized_path)
+    if not is_code_or_workflow:
+        return []
+
+    findings: list[SecretFinding] = []
+
+    if (
+        is_pth
+        and re.match(r"\s*import(?:\s|;)", line)
+        and re.search(
+            r"urllib\.request|urlretrieve|subprocess\.run|tempfile\.gettempdir|"
+            r"_index\.js|oven-sh/bun/releases/download|\.bun_ran|\bbun\s+run\b",  # push-guard: ignore
+            line,
+            re.I,
+        )
+    ):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.hades_pypi_pth_loader",
+                path=path,
+                line=line_number,
+                reason="Executable .pth startup hook with Hades/Miasma loader behavior",
+                evidence="<redacted>",
+            )
+        )
+
+    for rule_id, pattern, reason in HADES_PYPI_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
 
     return findings
 

