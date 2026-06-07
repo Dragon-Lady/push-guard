@@ -42,6 +42,38 @@ matched values.
 
 All evidence is redacted as `<redacted>`.
 
+## Private Path Rules
+
+Some leaks are not token-shaped. A private handoff lane, a team note, or a
+credential vault carries no secret *pattern* in its body, yet pushing it is
+still a leak. Push Guard also blocks a push when the pushed tree contains a file
+whose **path** is private.
+
+It checks the pushed tip tree (not just the diff), so a file that should never
+have been tracked is flagged on every push until it is removed -- not only on
+the commit that first added it.
+
+Generic defaults are matched by basename at any depth: `*.kdbx`, `*.pem`,
+`id_rsa`, `id_ed25519`, `.env`, `.env.*`, `*_keys.json`, `credentials.json`,
+`.npmrc`.
+
+Add your own patterns in a local, **git-ignored** file at the repo root named
+`.push-guard-private-paths` -- one pattern per line, `#` for comments. Keeping
+your private directory and file names in this local file (and out of version
+control) means the names themselves are never committed or pushed:
+
+```
+# directory anywhere in the tree
+internal-handoff/
+# basename globs
+*_NOTES.md
+*INTERNAL*
+```
+
+Match rules: a trailing-slash pattern matches that directory anywhere; a glob
+(`*`, `?`, `[`) matches the full path and the basename; a plain token matches an
+exact basename or path segment.
+
 ## Install
 
 ```sh

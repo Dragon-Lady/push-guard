@@ -6,10 +6,13 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from push_guard.guard import (
+    PRIVATE_PATH_DEFAULTS,
     _resolve_git_root,
     _scan_diff,
     install_pre_push_hook,
+    load_private_path_patterns,
     main,
+    path_matches_private,
     scan_text_for_secrets,
 )
 
@@ -267,8 +270,8 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual([], _scan_diff(diff_text))
 
     def test_resolve_git_root_canonicalizes_nested_repo_path(self):
-        nested = Path("C:/Users/tanya/dragoneye")
-        root = "C:/Users/tanya"
+        nested = Path("C:/Users/dev/project")
+        root = "C:/Users/dev"
 
         with patch(
             "push_guard.guard.subprocess.run",
@@ -301,14 +304,14 @@ class PushGuardTests(unittest.TestCase):
         )
 
     def test_resolve_git_root_retries_dubious_ownership_root(self):
-        nested = Path("C:/Users/tanya/dragoneye")
-        root = Path("C:/Users/tanya")
+        nested = Path("C:/Users/dev/project")
+        root = Path("C:/Users/dev")
         dubious = CalledProcessError(
             returncode=128,
             cmd=["git"],
             stderr=(
                 "fatal: detected dubious ownership in repository at "
-                "'C:/Users/tanya'\n"
+                "'C:/Users/dev'\n"
             ),
         )
 
@@ -344,6 +347,7 @@ class PushGuardTests(unittest.TestCase):
 
         with (
             patch("push_guard.guard._diffs_for_push_ref", return_value=[finding_diff]),
+            patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("sys.stdin", StringIO("refs/heads/main abc refs/heads/main def\n")),
             patch("sys.stderr", new_callable=StringIO) as stderr,
         ):
@@ -424,3 +428,56 @@ class PushGuardTests(unittest.TestCase):
                 hook = install_pre_push_hook(repo, allow_home_repo=True)
 
             self.assertTrue(hook.exists())
+
+    def test_private_path_directory_pattern_matches_anywhere(self):
+        patterns = ["private-lane/"]
+        self.assertIsNotNone(
+            path_matches_private("project/private-lane/INTERNAL_ARCHIVE.md", patterns)
+        )
+        self.assertIsNotNone(path_matches_private("private-lane/notes.md", patterns))
+        self.assertIsNone(
+            path_matches_private("project/engine.py", patterns)
+        )
+
+    def test_private_path_glob_pattern_matches_full_path_and_basename(self):
+        patterns = ["*MEMORY.md", "**/*.pem"]
+        self.assertIsNotNone(path_matches_private("teamnotes/MEMORY.md", patterns))
+        self.assertIsNotNone(path_matches_private("project/AGENT_MEMORY.md", patterns))
+        self.assertIsNotNone(path_matches_private("keys/server.pem", patterns))
+        self.assertIsNone(path_matches_private("docs/README.md", patterns))
+
+    def test_private_path_plain_token_matches_segment_or_basename(self):
+        patterns = ["INTERNAL_ARCHIVE.md", "teamnotes"]
+        self.assertIsNotNone(
+            path_matches_private("a/b/INTERNAL_ARCHIVE.md", patterns)
+        )
+        self.assertIsNotNone(path_matches_private("project/teamnotes/MEMORY.md", patterns))
+        self.assertIsNone(path_matches_private("project/main.py", patterns))
+
+    def test_private_path_defaults_catch_common_credential_files(self):
+        self.assertIsNotNone(path_matches_private("config/.env", PRIVATE_PATH_DEFAULTS))
+        self.assertIsNotNone(path_matches_private("secrets/vault.kdbx", PRIVATE_PATH_DEFAULTS))
+        self.assertIsNotNone(path_matches_private("family_keys.json", PRIVATE_PATH_DEFAULTS))
+        self.assertIsNone(path_matches_private("src/app.py", PRIVATE_PATH_DEFAULTS))
+
+    def test_load_private_path_patterns_reads_local_config(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".push-guard-private-paths").write_text(
+                "# local patterns\nprivate-lane/\n\n*BRIEFING*\n",
+                encoding="utf-8",
+            )
+            patterns = load_private_path_patterns(repo)
+
+        self.assertIn("private-lane/", patterns)
+        self.assertIn("*BRIEFING*", patterns)
+        # Defaults are always present alongside the local additions.
+        self.assertIn(".env", patterns)
+        # Comment and blank lines are ignored.
+        self.assertNotIn("# local patterns", patterns)
+        self.assertNotIn("", patterns)
+
+    def test_load_private_path_patterns_without_config_returns_defaults(self):
+        with TemporaryDirectory() as tmpdir:
+            patterns = load_private_path_patterns(Path(tmpdir))
+        self.assertEqual(PRIVATE_PATH_DEFAULTS, patterns)
