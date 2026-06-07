@@ -72,6 +72,83 @@ GENERIC_ASSIGNMENT = re.compile(
 )
 
 
+# --- Self-propagation / supply-chain worm heuristic -------------------------
+#
+# Separate threat model from the secret scanner above: instead of catching a
+# secret leaving the repo, this catches malicious self-propagating code (the
+# Shai-Hulud-style SSH/npm worm shape) entering it before you push it onward.
+#
+# Design: behavioral co-occurrence, NOT literal IOC signatures. Each signal is
+# a *category* of suspicious behavior. A finding only fires when at least
+# WORM_MIN_SIGNALS distinct categories appear in the same added file. This
+# survives trivial renames (a worm that calls its drop file `setup.sh` instead
+# of `ai_setup.sh` still trips temp_drop + process_spawn + repo_propagation),
+# and it keeps false positives down: ordinary code that merely reads
+# `process.env` or runs a single `git push` only lights up one category.
+WORM_MIN_SIGNALS = 2
+
+# Each entry: (signal_name, pattern). Patterns target the *behavior*, not one
+# campaign's exact filenames, so partial variants still match.
+WORM_SIGNALS = [
+    (
+        "ssh_key_material",
+        re.compile(r"(?i)(?:\.ssh/|authorized_keys|id_rsa|id_ed25519|ssh-keygen)"),
+    ),
+    (
+        "process_spawn",
+        re.compile(
+            r"(?i)(?:child_process|execSync|spawnSync|Bun\.spawn|os\.system"
+            r"|subprocess\.(?:run|Popen|call)|\b(?:ba)?sh\s+-c\b|popen\()"
+        ),
+    ),
+    (
+        # Enumerate-and-push, not a bare `git push` (too common in deploy
+        # scripts). We look for the propagation *shape*: iterating repos, the
+        # GitHub "list my repos" endpoints, or pushing to a per-repo variable.
+        "repo_propagation",
+        re.compile(
+            r"(?i)(?:infectHost|/user/repos|listForAuthenticatedUser"
+            r"|repos?\s*\.\s*(?:forEach|map)\b|for\s+repo\s+in\b"
+            r"|git\s+push\s+\S*\$\{?repo)"
+        ),
+    ),
+    (
+        # Outbound exfil destination, not merely reading a token. Reading
+        # process.env is everywhere; sending it to a hardcoded host/webhook or
+        # raw IP is the malicious half.
+        "network_exfil",
+        re.compile(
+            r"(?i)(?:webhook\.site|pastebin\.com|discord(?:app)?\.com/api/webhooks"
+            r"|requestbin|oast\.|interact\.sh"
+            r"|\bcurl\s+[^|;\n]*\b-[A-Za-z]*d\b"
+            r"|fetch\(\s*['\"]https?://(?!localhost|127\.0\.0\.1)"
+            r"|https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+        ),
+    ),
+    (
+        "temp_drop",
+        re.compile(r"(?i)(?:/tmp/\.[A-Za-z0-9._-]+|os\.tmpdir\(\)|mkdtemp)"),
+    ),
+    (
+        # Persistence via package lifecycle scripts or git hooks. NOTE:
+        # `.git/hooks/*` is untracked so it never reaches a push diff; the
+        # reachable surface is the *installer* (package.json scripts, husky,
+        # core.hooksPath) that writes the hook.
+        "hook_install",
+        re.compile(
+            r"(?i)(?:\"(?:pre|post)install\"\s*:|\"prepare\"\s*:"
+            r"|core\.hooksPath|\.git/hooks/|husky)"
+        ),
+    ),
+]
+
+# Prose docs are skipped for the worm heuristic: an advisory write-up that
+# documents an IOC (e.g. /tmp/.sshu-*) is textually identical to the malware
+# that uses it, and must not be blocked. The behavioral code lives in scripts,
+# not in markdown, so skipping doc suffixes is safe and deterministic.
+DOC_SUFFIXES = (".md", ".markdown", ".mdx", ".rst", ".txt", ".adoc")
+
+
 @dataclass(frozen=True)
 class SecretFinding:
     rule_id: str
@@ -142,7 +219,11 @@ def _pre_push_main(argv: list[str]) -> int:
         return 0
 
     print("Push Guard blocked this push.", file=sys.stderr)
-    print("Likely secret material matched. Values are redacted.", file=sys.stderr)
+    print(
+        "Likely secret or self-propagation indicators matched. "
+        "Secret values are redacted.",
+        file=sys.stderr,
+    )
     for finding in findings:
         print(
             f"- {finding.rule_id} at {finding.path}:{finding.line} "
@@ -360,8 +441,13 @@ def _scan_diff(diff_text: str) -> list[SecretFinding]:
     current_path = "<diff>"
     new_line = 0
     in_hunk = False
+    # Added lines for the file currently being walked, used by the file-level
+    # worm heuristic (signal co-occurrence cannot be judged line by line).
+    added: list[tuple[int, str]] = []
     for line in diff_text.splitlines():
         if line.startswith("+++ b/"):
+            findings.extend(_scan_worm(current_path, added))
+            added = []
             current_path = line[6:]
             continue
         if line.startswith("@@"):
@@ -371,7 +457,9 @@ def _scan_diff(diff_text: str) -> list[SecretFinding]:
         if not in_hunk:
             continue
         if line.startswith("+") and not line.startswith("+++"):
-            findings.extend(_scan_line(line[1:], current_path, max(new_line, 1)))
+            line_number = max(new_line, 1)
+            findings.extend(_scan_line(line[1:], current_path, line_number))
+            added.append((line_number, line[1:]))
             new_line += 1
             continue
         if line.startswith("-") and not line.startswith("---"):
@@ -379,7 +467,37 @@ def _scan_diff(diff_text: str) -> list[SecretFinding]:
         if line.startswith("\\ No newline"):
             continue
         new_line += 1
+    findings.extend(_scan_worm(current_path, added))
     return findings
+
+
+def _scan_worm(path: str, added_lines: list[tuple[int, str]]) -> list[SecretFinding]:
+    """Flag a file whose added lines show >= WORM_MIN_SIGNALS worm behaviors."""
+    if not added_lines or _is_doc_path(path):
+        return []
+    matched: dict[str, int] = {}
+    for line_number, text in added_lines:
+        for name, pattern in WORM_SIGNALS:
+            if name in matched:
+                continue
+            if pattern.search(text):
+                matched[name] = line_number
+    if len(matched) < WORM_MIN_SIGNALS:
+        return []
+    return [
+        SecretFinding(
+            rule_id="malware.worm_propagation",
+            path=path,
+            line=min(matched.values()),
+            reason="Multiple self-propagation indicators co-occur in one file",
+            # Signal *category* names are safe to surface (not secret values).
+            evidence="signals: " + "+".join(sorted(matched)),
+        )
+    ]
+
+
+def _is_doc_path(path: str) -> bool:
+    return path.lower().endswith(DOC_SUFFIXES)
 
 
 def _parse_hunk_new_line(line: str) -> int:

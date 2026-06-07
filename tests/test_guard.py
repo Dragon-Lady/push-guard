@@ -153,6 +153,72 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual("config.py", findings[0].path)
         self.assertEqual(12, findings[0].line)
 
+    def test_worm_heuristic_flags_ssh_propagation_diff(self):
+        # Fixture-style Shai-Hulud SSH propagation: a dropper script that reads
+        # SSH key material, spawns a process, drops a hidden temp file, and
+        # enumerates/pushes to repos. Filenames are renamed from the known IOCs
+        # to prove the heuristic keys on behavior, not literal signatures.
+        diff_text = "\n".join(
+            [
+                "diff --git a/setup.sh b/setup.sh",
+                "new file mode 100755",
+                "--- /dev/null",
+                "+++ b/setup.sh",
+                "@@ -0,0 +1,5 @@",
+                "+cp ~/.ssh/id_rsa /tmp/.harvest-$RANDOM",
+                "+Bun.spawnSync(['node', 'init.js'])",
+                "+for repo in $(gh repo list); do",
+                "+  git push https://x@github.com/$repo HEAD:main",
+                "+done",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+
+        worm = [f for f in findings if f.rule_id == "malware.worm_propagation"]
+        self.assertEqual(1, len(worm))
+        self.assertEqual("setup.sh", worm[0].path)
+        # Evidence lists signal categories, never the dropped key material.
+        self.assertIn("signals:", worm[0].evidence)
+        self.assertNotIn("id_rsa", worm[0].evidence)
+
+    def test_worm_heuristic_ignores_markdown_advisory(self):
+        # An advisory write-up documenting the very same IOCs must NOT be
+        # blocked, even though it is textually full of worm indicators.
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/advisory.md b/docs/advisory.md",
+                "--- a/docs/advisory.md",
+                "+++ b/docs/advisory.md",
+                "@@ -1,0 +1,4 @@",
+                "+The worm copies `~/.ssh/id_rsa` to `/tmp/.sshu-<rand>`,",
+                "+calls `Bun.spawnSync`, runs `infectHost`, then does",
+                "+`git push https://token@github.com/$repo` across every repo",
+                "+enumerated from /user/repos.",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+
+        self.assertEqual([], findings)
+
+    def test_worm_heuristic_requires_multiple_signals(self):
+        # A single suspicious behavior in isolation (here: only a temp-file
+        # drop) is ordinary enough that it must not fire on its own.
+        diff_text = "\n".join(
+            [
+                "diff --git a/cache.js b/cache.js",
+                "--- a/cache.js",
+                "+++ b/cache.js",
+                "@@ -1,0 +1,1 @@",
+                "+const dir = os.tmpdir() + '/.cache-' + Date.now()",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+
+        self.assertEqual([], findings)
+
     def test_resolve_git_root_canonicalizes_nested_repo_path(self):
         nested = Path("C:/Users/tanya/dragoneye")
         root = "C:/Users/tanya"

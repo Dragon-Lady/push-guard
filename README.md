@@ -39,8 +39,15 @@ matched values.
 - private key block markers
 - generic long `api_key`, `token`, `secret`, or `password` assignments,
   including underscore/dash-delimited names such as `AWS_SECRET_ACCESS_KEY`
+- self-propagation worm shape (`malware.worm_propagation`): fires when an added
+  file shows two or more co-occurring behaviors — SSH key access, process
+  spawning, repo enumerate-and-push, outbound exfil, hidden temp drops, or
+  lifecycle/git-hook install. Keyed on behavior, not literal IOCs, so renamed
+  variants still match. Prose docs (`.md`, `.rst`, `.txt`, …) are skipped so an
+  advisory that documents an indicator is not blocked.
 
-All evidence is redacted as `<redacted>`.
+Secret evidence is redacted as `<redacted>`; worm findings report only the
+matched signal category names.
 
 ## Install
 
