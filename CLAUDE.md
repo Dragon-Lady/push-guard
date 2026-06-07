@@ -35,6 +35,40 @@ python -m push_guard install --repo .          # add --force to refresh
 python -m unittest discover -s tests           # 24 tests, all passing
 ```
 
+## Optional: server-side PR review (Anthropic's action)
+
+Complements push-guard. Push Guard is a *local pre-push* seatbelt; Anthropic's
+`claude-code-security-review` is a *server-side PR* reviewer that posts inline
+findings. Use both: local catches it before it leaves the machine, CI catches
+what bypassed the hook.
+
+`.github/workflows/security.yml`:
+
+```yaml
+name: Security Review
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write          # needed to post inline findings
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2         # diff needs the PR base
+      - uses: anthropics/claude-code-security-review@main
+        with:
+          comment-pr: true
+          claude-api-key: ${{ secrets.CLAUDE_API_KEY }}
+```
+
+Setup: add repo secret `CLAUDE_API_KEY` (key needs Code tool access).
+Default model `claude-opus-4-1-20250805`; supports custom org rules and
+excluded dirs. **Caveat: not hardened against prompt injection** — only run on
+trusted PRs; enable "Require approval for all external contributors" so a forked
+PR can't run it with a malicious diff.
+
 ## Open follow-ups
 
 - **Sync gap was the headline finding:** the SSH heuristic previously lived only
