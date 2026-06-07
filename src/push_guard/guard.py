@@ -11,6 +11,13 @@ from pathlib import Path
 
 ZERO_SHA = "0" * 40
 
+# Inline allowlist escape hatch. A line containing this marker is skipped by
+# every rule. Use it on lines that legitimately carry IOC-shaped strings: this
+# detector's own pattern definitions and test fixtures, or a deploy script
+# that really does ssh-then-exec. It is explicit and grep-auditable on purpose --
+# matching detect-secrets' `# pragma: allowlist secret` philosophy.
+IGNORE_MARKER = re.compile(r"push-guard:\s*ignore", re.IGNORECASE)
+
 PLACEHOLDER_WORDS = {
     "changeme",
     "example",
@@ -70,6 +77,29 @@ GENERIC_ASSIGNMENT = re.compile(
     r"(?:[_-][A-Za-z0-9]+)*"
     r"\s*[:=]\s*['\"]?([^'\"\s]{20,})"
 )
+
+SHAI_HULUD_SSH_PATTERNS = [
+    (
+        "workflow.shai_hulud_ssh_tmp",
+        re.compile(r"/tmp/\.sshu-[A-Za-z0-9_-]*", re.I),
+        "Hidden /tmp/.sshu-* SSH propagation artifact",  # push-guard: ignore
+    ),
+    (
+        "workflow.shai_hulud_ai_loader",
+        re.compile(r"\bai_(?:setup\.sh|init\.js)\b", re.I),
+        "AI-themed Shai-Hulud SSH loader/payload filename",
+    ),
+    (
+        "workflow.ssh_fanout_exec",
+        re.compile(r"\b(?:ssh|scp|rsync)\b.*\b(?:bun|node|sh|bash|curl|wget)\b", re.I),  # push-guard: ignore
+        "SSH fan-out combined with script/network execution",
+    ),
+    (
+        "workflow.bun_tmp_exec",
+        re.compile(r"\bBun\.spawnSync\b.*(?:/tmp/|ai_setup\.sh|ai_init\.js)", re.I),
+        "Bun execution paired with temp or AI-themed payload behavior",
+    ),
+]
 
 
 @dataclass(frozen=True)
@@ -246,6 +276,10 @@ def _print_help() -> None:
 def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
 
+    # Explicit per-line opt-out. Skip the whole line for every rule.
+    if IGNORE_MARKER.search(line):
+        return findings
+
     for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
         for match in pattern.finditer(line):
             # High-confidence provider token shapes are never suppressed by a
@@ -281,7 +315,73 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
                 )
             )
 
+    findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
+
     return findings
+
+
+def _scan_line_for_workflow_compromise(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    if not _is_workflow_or_script_path(normalized_path):
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in SHAI_HULUD_SSH_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    if (
+        re.search(r"\binfectHost\s*\(", line)
+        or re.search(r"\bremote(?:Loader|Payload)Script\b", line)
+    ):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.shai_hulud_ssh_shape",
+                path=path,
+                line=line_number,
+                reason="Shai-Hulud SSH propagation function/variable shape",
+                evidence="<redacted>",
+            )
+        )
+
+    return findings
+
+
+def _is_workflow_or_script_path(path: str) -> bool:
+    lowered = path.lower()
+    if lowered.endswith((".md", ".mdx", ".txt", ".rst")):
+        return False
+    if any(
+        marker in lowered
+        for marker in (
+            "/.github/workflows/",
+            ".github/workflows/",
+            "/.githooks/",
+            ".githooks/",
+            "/hooks/",
+            "hooks/",
+            "/scripts/",
+            "scripts/",
+            "/bin/",
+            "bin/",
+            "/tools/",
+            "tools/",
+            "/ci/",
+            "ci/",
+        )
+    ):
+        return True
+    return lowered.endswith((".sh", ".bash", ".zsh", ".js", ".cjs", ".mjs", ".ps1", ".py", ".yml", ".yaml"))
 
 
 def _looks_like_placeholder(value: str) -> bool:

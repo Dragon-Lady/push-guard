@@ -153,6 +153,65 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual("config.py", findings[0].path)
         self.assertEqual(12, findings[0].line)
 
+    def test_scan_diff_blocks_shai_hulud_ssh_shape_in_scripts(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/scripts/sync.js b/scripts/sync.js",
+                "index 1111111..2222222 100644",
+                "--- a/scripts/sync.js",
+                "+++ b/scripts/sync.js",
+                "@@ -1,0 +1,5 @@",
+                "+async function infectHost(targetSshHost, remoteLoaderScript, remotePayloadScript) {",  # push-guard: ignore
+                "+  const remoteWorkDir = \"/tmp/.sshu-\" + Math.random().toString(36).slice(2, 8);",  # push-guard: ignore
+                "+  const remoteLoaderFileName = \"ai_setup.sh\";",  # push-guard: ignore
+                "+  const remotePayloadFileName = \"ai_init.js\";",  # push-guard: ignore
+                "+  Bun.spawnSync([\"ssh\", targetSshHost, \"sh\", remoteLoaderFileName]);",  # push-guard: ignore
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.shai_hulud_ssh_shape", rule_ids)
+        self.assertIn("workflow.shai_hulud_ssh_tmp", rule_ids)
+        self.assertIn("workflow.shai_hulud_ai_loader", rule_ids)
+
+    def test_scan_diff_does_not_block_markdown_indicator_notes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/note.md b/docs/note.md",
+                "index 1111111..2222222 100644",
+                "--- a/docs/note.md",
+                "+++ b/docs/note.md",
+                "@@ -1,0 +1,3 @@",
+                "+Watch /tmp/.sshu-* directories.",  # push-guard: ignore
+                "+Look for ai_setup.sh and ai_init.js.",  # push-guard: ignore
+                "+Mention infectHost only as a defensive note.",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+
+        self.assertEqual([], findings)
+
+    def test_ignore_marker_suppresses_secret_and_workflow_rules(self):
+        # A line carrying the explicit opt-out marker is skipped by every rule,
+        # even when it contains a real token shape and an IOC pattern.
+        line = (
+            "+const k = \"ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\";"  # push-guard: ignore
+            "  Bun.spawnSync([\"ssh\", h, \"/tmp/.sshu-x\"]);  # push-guard: ignore"
+        )
+        diff_text = "\n".join(
+            [
+                "diff --git a/scripts/sync.js b/scripts/sync.js",
+                "+++ b/scripts/sync.js",
+                "@@ -1,0 +1,1 @@",
+                line,
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_resolve_git_root_canonicalizes_nested_repo_path(self):
         nested = Path("C:/Users/tanya/dragoneye")
         root = "C:/Users/tanya"
