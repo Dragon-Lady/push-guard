@@ -460,6 +460,25 @@ class PushGuardTests(unittest.TestCase):
         self.assertIsNotNone(path_matches_private("family_keys.json", PRIVATE_PATH_DEFAULTS))
         self.assertIsNone(path_matches_private("src/app.py", PRIVATE_PATH_DEFAULTS))
 
+    def test_safe_env_templates_are_allowed_but_real_env_still_blocked(self):
+        # Placeholder templates are meant to be committed -> must NOT be flagged,
+        # even though their names match the ".env.*" default pattern.
+        for template in (".env.example", ".env.sample", ".env.template", ".env.dist"):
+            self.assertIsNone(
+                path_matches_private(template, PRIVATE_PATH_DEFAULTS),
+                f"{template} should be allowed (safe placeholder template)",
+            )
+            self.assertIsNone(
+                path_matches_private(f"config/{template}", PRIVATE_PATH_DEFAULTS),
+                f"nested {template} should be allowed too",
+            )
+        # Real secret-bearing env files stay blocked.
+        for secret in (".env", ".env.local", ".env.prod", "config/.env.production"):
+            self.assertIsNotNone(
+                path_matches_private(secret, PRIVATE_PATH_DEFAULTS),
+                f"{secret} must still be blocked",
+            )
+
     def test_load_private_path_patterns_reads_local_config(self):
         with TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

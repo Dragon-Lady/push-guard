@@ -172,6 +172,14 @@ PRIVATE_PATH_DEFAULTS = [
     ".npmrc",
 ]
 
+# Conventionally-safe, meant-to-be-committed env templates. They contain only
+# placeholder values (the real, secret-bearing .env is gitignored), so they must
+# NOT be flagged as private even though their names match the ".env.*" pattern
+# above. Real .env and environment-specific files (.env.local, .env.prod, ...)
+# stay blocked. (Fix designed by James, applied by Oracle, 2026-06-07 — closes the
+# .env.example false positive that was blocking every push on the family repos.)
+SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template", ".env.dist"}
+
 PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
 
 
@@ -201,6 +209,9 @@ def path_matches_private(path: str, patterns: list[str]) -> str | None:
     """
     normalized = path.replace("\\", "/").lstrip("/")
     basename = normalized.rsplit("/", 1)[-1]
+    # Safe env templates are explicitly allowed (placeholders only; real .env is gitignored).
+    if basename in SAFE_ENV_TEMPLATES:
+        return None
     segments = normalized.split("/")
     for pattern in patterns:
         pat = pattern.replace("\\", "/").strip()
