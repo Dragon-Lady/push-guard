@@ -442,10 +442,16 @@ def install_pre_push_hook(
 
 
 def _hook_body() -> str:
+    # Pin the hook to the interpreter running the install so it points at the
+    # same environment push_guard is installed in. A bare "python" breaks where
+    # only python3 exists (most Linux) or where push_guard lives in a venv that
+    # isn't on the hook's PATH. sys.executable is that interpreter; fall back to
+    # python3 only if it is somehow unset.
+    python = sys.executable or "python3"
     return (
         "#!/bin/sh\n"
         "# Installed by Push Guard. Local only; no network calls.\n"
-        'exec python -m push_guard --repo "$(git rev-parse --show-toplevel)"\n'
+        f'exec "{python}" -m push_guard --repo "$(git rev-parse --show-toplevel)"\n'
     )
 
 
