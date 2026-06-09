@@ -176,8 +176,8 @@ PRIVATE_PATH_DEFAULTS = [
 # placeholder values (the real, secret-bearing .env is gitignored), so they must
 # NOT be flagged as private even though their names match the ".env.*" pattern
 # above. Real .env and environment-specific files (.env.local, .env.prod, ...)
-# stay blocked. (Fix designed by James, applied by Oracle, 2026-06-07 — closes the
-# .env.example false positive that was blocking every push on the family repos.)
+# stay blocked. This closes the .env.example false positive that otherwise
+# blocks every push in repos that legitimately commit an example template.
 SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template", ".env.dist"}
 
 PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
