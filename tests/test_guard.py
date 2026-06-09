@@ -1,3 +1,4 @@
+import sys
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -386,8 +387,12 @@ class PushGuardTests(unittest.TestCase):
 
             self.assertEqual(repo / ".git" / "hooks" / "pre-push", hook)
             body = hook.read_text(encoding="utf-8")
-            self.assertIn("python -m push_guard", body)
+            self.assertIn("-m push_guard", body)
             self.assertIn("--repo", body)
+            # Hook must pin the running interpreter (venv/python3 safe), not a
+            # bare "python" that breaks on Linux or outside the install env.
+            self.assertIn(sys.executable, body)
+            self.assertNotIn("exec python -m", body)
 
     def test_install_pre_push_hook_refuses_unmanaged_existing_hook(self):
         with TemporaryDirectory() as tmpdir:
