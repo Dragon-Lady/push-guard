@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -138,6 +139,31 @@ HADES_PYPI_PATTERNS = [
             re.I,
         ),  # push-guard: ignore
         "Hades/Miasma GitHub token-monitor persistence marker",
+    ),
+]
+
+OTTERCOOKIE_NPM_PATTERNS = [
+    (
+        "workflow.ottercookie_vercel_c2",
+        re.compile(
+            r"cloudflare(?:insights|firewall|security)(?:\[\.\]|\.)vercel(?:\[\.\]|\.)app",  # push-guard: ignore
+            re.I,
+        ),  # push-guard: ignore
+        "OtterCookie npm Vercel-hosted C2 domain",
+    ),
+    (
+        "workflow.ottercookie_npm_package",
+        re.compile(
+            r"\b(?:bjs-lint-builders|bjs-lint-builder|bjs-biginteger|"
+            r"hjs-lint-builders|sjs-builders|sjs-builder|npm-doc-builder)\b",  # push-guard: ignore
+            re.I,
+        ),  # push-guard: ignore
+        "Panther OtterCookie npm package indicator",
+    ),
+    (
+        "workflow.ottercookie_ssh_backdoor_shape",
+        re.compile(r"authorized_keys|ufw\s+allow\s+22/tcp|/api/ssh-key", re.I),  # push-guard: ignore
+        "OtterCookie SSH key or firewall backdoor behavior",
     ),
 ]
 
@@ -488,6 +514,11 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
                 )
             )
 
+    if not findings:
+        findings.extend(
+            _scan_normalized_high_confidence_token_shapes(line, path, line_number)
+        )
+
     # Only consider the lower-confidence generic-assignment rule when no
     # specific token already matched this line. This avoids double-reporting a
     # single leak (e.g. OPENAI_API_KEY=sk-...) while still catching secrets that
@@ -508,8 +539,57 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
 
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
+    findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
 
     return findings
+
+
+def _scan_normalized_high_confidence_token_shapes(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    findings: list[SecretFinding] = []
+    seen_rules: set[str] = set()
+
+    for variant in _normalized_secret_shape_variants(line):
+        for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
+            if not high_confidence or rule_id in seen_rules:
+                continue
+            if pattern.search(variant):
+                seen_rules.add(rule_id)
+                findings.append(
+                    SecretFinding(
+                        rule_id=rule_id,
+                        path=path,
+                        line=line_number,
+                        reason=f"{reason} in encoded or split text",
+                        evidence="<redacted>",
+                    )
+                )
+
+    return findings
+
+
+def _normalized_secret_shape_variants(line: str) -> list[str]:
+    variants: list[str] = []
+
+    decoded = urllib.parse.unquote(line)
+    if decoded != line:
+        variants.append(decoded)
+
+    compact = re.sub(r"[\"'`]", "", line)
+    compact = re.sub(r"\s*\+\s*", "", compact)
+    compact = re.sub(r"\s+", "", compact)
+    if compact != line:
+        variants.append(compact)
+
+    if decoded != line:
+        decoded_compact = re.sub(r"[\"'`]", "", decoded)
+        decoded_compact = re.sub(r"\s*\+\s*", "", decoded_compact)
+        decoded_compact = re.sub(r"\s+", "", decoded_compact)
+        if decoded_compact != decoded and decoded_compact not in variants:
+            variants.append(decoded_compact)
+
+    return variants
 
 
 def _scan_line_for_workflow_compromise(
@@ -596,6 +676,31 @@ def _scan_line_for_hades_pypi(
                 )
             )
 
+    return findings
+
+
+def _scan_line_for_ottercookie_npm(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+    if not _is_workflow_or_script_path(normalized_path):
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in OTTERCOOKIE_NPM_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
     return findings
 
 

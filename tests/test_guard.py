@@ -65,6 +65,28 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual("secret.aws_access_key", findings[0].rule_id)
         self.assertNotIn(secret, findings[0].evidence)
 
+    def test_detects_url_encoded_provider_token_shape(self):
+        secret = "gh" + "p_" + "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"  # push-guard: ignore
+        encoded = secret.replace("_", "%5F")
+        findings = scan_text_for_secrets(f"token={encoded}", path="config.txt")
+
+        self.assertEqual(1, len(findings))
+        self.assertEqual("secret.github_token", findings[0].rule_id)
+        self.assertNotIn(secret, findings[0].evidence)
+
+    def test_detects_split_provider_token_shape(self):
+        key = "OPENAI" + "_API_KEY"
+        prefix = "s" + "k-"
+        secret_tail = "abcdefghijklmnopqrstuvwxyzABCDEF"  # push-guard: ignore
+        findings = scan_text_for_secrets(
+            f'{key} = "{prefix}" + "{secret_tail}"',  # push-guard: ignore
+            path="config.py",
+        )
+
+        self.assertEqual(1, len(findings))
+        self.assertEqual("secret.openai_token", findings[0].rule_id)
+        self.assertNotIn(secret_tail, findings[0].evidence)
+
     def test_detects_generic_secret_assignment_without_returning_secret_value(self):
         secret = "superlongsecretvalue1234567890"
         findings = scan_text_for_secrets(f"api_key = '{secret}'", path="config.py")
@@ -247,6 +269,44 @@ class PushGuardTests(unittest.TestCase):
                 "+Watch for Hades - The End for the Damned.",  # push-guard: ignore
                 "+Watch for Run Copilot and format-results.",  # push-guard: ignore
                 "+Watch for gh-token-monitor persistence.",  # push-guard: ignore
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
+    def test_scan_diff_blocks_ottercookie_npm_c2_and_backdoor_shapes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/scripts/install.js b/scripts/install.js",
+                "index 1111111..2222222 100644",
+                "--- a/scripts/install.js",
+                "+++ b/scripts/install.js",
+                "@@ -1,0 +1,4 @@",
+                "+const pkg = 'bjs-lint-builder';",  # push-guard: ignore
+                "+const c2 = 'https://cloudflareinsights.vercel.app/api/v1';",  # push-guard: ignore
+                "+fs.appendFileSync(`${home}/.ssh/authorized_keys`, key);",  # push-guard: ignore
+                "+child_process.execSync('sudo ufw allow 22/tcp');",  # push-guard: ignore
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.ottercookie_npm_package", rule_ids)
+        self.assertIn("workflow.ottercookie_vercel_c2", rule_ids)
+        self.assertIn("workflow.ottercookie_ssh_backdoor_shape", rule_ids)
+
+    def test_scan_diff_does_not_block_markdown_ottercookie_notes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/ottercookie.md b/docs/ottercookie.md",
+                "index 1111111..2222222 100644",
+                "--- a/docs/ottercookie.md",
+                "+++ b/docs/ottercookie.md",
+                "@@ -1,0 +1,3 @@",
+                "+Watch bjs-lint-builder package references.",  # push-guard: ignore
+                "+Watch cloudflareinsights.vercel.app traffic.",  # push-guard: ignore
+                "+Check authorized_keys and ufw allow 22/tcp changes.",  # push-guard: ignore
             ]
         )
 
