@@ -154,7 +154,7 @@ OTTERCOOKIE_NPM_PATTERNS = [
     (
         "workflow.ottercookie_npm_package",
         re.compile(
-            r"\b(?:bjs-lint-builders|bjs-lint-builder|bjs-biginteger|"
+            r"\b(?:bjs-lint-builders|bjs-lint-builder|bjs-biginteger|"  # push-guard: ignore
             r"hjs-lint-builders|sjs-builders|sjs-builder|npm-doc-builder)\b",  # push-guard: ignore
             re.I,
         ),  # push-guard: ignore
