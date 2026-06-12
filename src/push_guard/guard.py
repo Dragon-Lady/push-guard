@@ -167,6 +167,74 @@ OTTERCOOKIE_NPM_PATTERNS = [
     ),
 ]
 
+ASTRO_CONFIG_C2_PATTERNS = [
+    (
+        "workflow.astro_config_create_require",
+        re.compile(r"\bcreateRequire\s*\(", re.I),
+        "Astro config reconstructs CommonJS require",
+    ),
+    (
+        "workflow.astro_config_eval_sink",
+        re.compile(r"\b(?:eval|Function)\s*\(", re.I),
+        "Astro config contains JavaScript eval/function execution sink",
+    ),
+    (
+        "workflow.astro_config_network_loader",
+        re.compile(
+            r"\brequire\s*\(\s*['\"](?:node:)?https?['\"]\s*\)|"
+            r"\bfrom\s+['\"](?:node:)?https?['\"]|"
+            r"\bhttps?\s*\.\s*(?:request|get)\s*\(|"
+            r"\bfetch\s*\(",
+            re.I,
+        ),
+        "Astro config contains network loader behavior",
+    ),
+    (
+        "workflow.astro_config_blockchain_c2",
+        re.compile(
+            r"trongrid|aptoslabs|bsc-dataseed|publicnode|eth_getTransactionByHash|"
+            r"Sec-V|TMfKQEd7TJJa5xNZJZ2Lep838vrzrs7mAP",  # push-guard: ignore
+            re.I,
+        ),
+        "Astro config contains blockchain/C2 relay marker",
+    ),
+]
+
+ASTRO_GITIGNORE_HIDE_FILES = re.compile(
+    r"\b(?:branch_structure\.json|temp_auto_push\.bat|temp_interactive_push\.bat)\b",
+    re.I,
+)
+
+OPENCLAW_FIXED_VERSION = "2026.4.23"
+OPENCLAW_VERSION_RE = re.compile(
+    r"\bopenclaw\b[^\n\r]{0,80}\b([0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2})\b",
+    re.I,
+)
+OPENCLAW_OPEN_DM_POLICY_RE = re.compile(r"\bdmPolicy[\"']?\s*[:=]\s*[\"']open[\"']", re.I)
+OPENCLAW_WILDCARD_ALLOW_RE = re.compile(
+    r"\ballowFrom[\"']?\s*[:=][^\n\r]{0,160}[\"']\*[\"']",
+    re.I,
+)
+OPENCLAW_DISABLED_SANDBOX_RE = re.compile(
+    r"(?:agents\.defaults\.sandbox\.mode|sandbox[^\n\r]{0,80}\bmode)"
+    r"[\"']?\s*[:=]\s*[\"'](?:none|off|host|main|disabled)[\"']",
+    re.I,
+)
+NPM_V12_PREPARE_MIN_VERSION = "11.16.0"
+NPM_VERSION_RE = re.compile(r"\bnpm\b[^\n\r0-9]{0,12}([0-9]+\.[0-9]+\.[0-9]+)\b", re.I)
+NPM_REMOTE_TARBALL_RE = re.compile(
+    r"[\"']https?://[^\"'\s]+(?:\.tgz|\.tar\.gz)(?:[?#][^\"'\s]*)?[\"']",
+    re.I,
+)
+NPM_GIT_DEPENDENCY_RE = re.compile(
+    r"[\"'](?:git\+https?|git|github|gitlab|bitbucket):[^\"']+[\"']|github\.com[:/]",
+    re.I,
+)
+NPM_BROAD_ALLOW_RE = re.compile(
+    r"^\s*(allow-git|allow-remote|allow-scripts)\s*=\s*(?:true|all|\*)\s*$",
+    re.I,
+)
+
 
 # ---------------------------------------------------------------------------
 # Private-path rules.
@@ -540,6 +608,9 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
+    findings.extend(_scan_line_for_astro_config_c2(line, path, line_number))
+    findings.extend(_scan_line_for_openclaw_agent_exposure(line, path, line_number))
+    findings.extend(_scan_line_for_npm_v12_readiness(line, path, line_number))
 
     return findings
 
@@ -701,6 +772,212 @@ def _scan_line_for_ottercookie_npm(
                     evidence="<redacted>",
                 )
             )
+    return findings
+
+
+def _scan_line_for_astro_config_c2(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    findings: list[SecretFinding] = []
+
+    if lowered_path.endswith("/.gitignore") or lowered_path == ".gitignore":
+        if ASTRO_GITIGNORE_HIDE_FILES.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id="workflow.gitignore_hidden_pr_tooling",
+                    path=path,
+                    line=line_number,
+                    reason="Gitignore hides PR automation/helper artifact names used in Astro config C2 reporting",
+                    evidence="<redacted>",
+                )
+            )
+        return findings
+
+    if not _is_astro_config_path(normalized_path):
+        return findings
+
+    for rule_id, pattern, reason in ASTRO_CONFIG_C2_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    if len(line) > 300 and re.search(r"[ \t]{80,}\S", line) and _astro_config_line_has_loader_signal(line):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.astro_config_hidden_payload_line",
+                path=path,
+                line=line_number,
+                reason="Astro config contains a long horizontally hidden executable-looking payload line",
+                evidence="<redacted>",
+            )
+        )
+
+    return findings
+
+
+def _is_astro_config_path(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.startswith("astro.config.") and name.endswith((".js", ".cjs", ".mjs", ".ts", ".mts", ".cts"))
+
+
+def _astro_config_line_has_loader_signal(line: str) -> bool:
+    return bool(
+        re.search(
+            r"createRequire|eval\s*\(|Function\s*\(|global\s*(?:\.|\[)|"
+            r"Buffer\.from|https?\.|\.request\s*\(|\.get\s*\(|fetch\s*\(|"
+            r"trongrid|aptoslabs|bsc-dataseed|publicnode",
+            line,
+            re.I,
+        )
+    )
+
+
+def _scan_line_for_openclaw_agent_exposure(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    findings: list[SecretFinding] = []
+
+    if _is_dependency_metadata_path(normalized_path):
+        for match in OPENCLAW_VERSION_RE.finditer(line):
+            version = match.group(1)
+            if _compare_dotted_version(version, OPENCLAW_FIXED_VERSION) < 0:
+                findings.append(
+                    SecretFinding(
+                        rule_id="workflow.openclaw_vulnerable_version",
+                        path=path,
+                        line=line_number,
+                        reason=f"OpenClaw {version} predates the {OPENCLAW_FIXED_VERSION} message-object prompt-boundary fix",
+                        evidence="<redacted>",
+                    )
+                )
+
+    if not _is_openclaw_config_path(normalized_path):
+        return findings
+
+    has_open_dm = OPENCLAW_OPEN_DM_POLICY_RE.search(line)
+    if has_open_dm and OPENCLAW_WILDCARD_ALLOW_RE.search(line):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.openclaw_open_dm_wildcard",
+                path=path,
+                line=line_number,
+                reason="OpenClaw config allows public inbound DMs with a wildcard allowlist",
+                evidence="<redacted>",
+            )
+        )
+
+    if has_open_dm and OPENCLAW_DISABLED_SANDBOX_RE.search(line):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.openclaw_open_dm_unsandboxed",
+                path=path,
+                line=line_number,
+                reason="OpenClaw config combines open inbound DMs with host/main/disabled sandbox mode",
+                evidence="<redacted>",
+            )
+        )
+
+    return findings
+
+
+def _is_dependency_metadata_path(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+    }
+
+
+def _is_openclaw_config_path(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {".crabbox.yaml", ".crabbox.yml"} or bool(
+        re.match(r"openclaw\.(?:json|jsonc|ya?ml|toml)$", name, re.I)
+    )
+
+
+def _compare_dotted_version(left: str, right: str) -> int:
+    left_parts = [int(part) for part in left.split(".")]
+    right_parts = [int(part) for part in right.split(".")]
+    length = max(len(left_parts), len(right_parts))
+    left_parts.extend([0] * (length - len(left_parts)))
+    right_parts.extend([0] * (length - len(right_parts)))
+    if left_parts == right_parts:
+        return 0
+    return -1 if left_parts < right_parts else 1
+
+
+def _scan_line_for_npm_v12_readiness(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    name = normalized_path.rsplit("/", 1)[-1].lower()
+    findings: list[SecretFinding] = []
+
+    if name == ".npmrc":
+        match = NPM_BROAD_ALLOW_RE.search(line)
+        if match:
+            findings.append(
+                SecretFinding(
+                    rule_id=f"workflow.npm_v12_broad_{match.group(1).replace('-', '_')}",
+                    path=path,
+                    line=line_number,
+                    reason="Repo .npmrc broadly re-enables an npm v12 install-time execution or fetch surface",
+                    evidence="<redacted>",
+                )
+            )
+        return findings
+
+    if not _is_dependency_metadata_path(normalized_path):
+        return findings
+
+    for match in NPM_VERSION_RE.finditer(line):
+        version = match.group(1)
+        if _compare_dotted_version(version, NPM_V12_PREPARE_MIN_VERSION) < 0:
+            findings.append(
+                SecretFinding(
+                    rule_id="workflow.npm_v12_old_npm_pin",
+                    path=path,
+                    line=line_number,
+                    reason=f"npm {version} is older than {NPM_V12_PREPARE_MIN_VERSION}, which surfaces npm v12 migration warnings",
+                    evidence="<redacted>",
+                )
+            )
+
+    if NPM_REMOTE_TARBALL_RE.search(line):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.npm_v12_remote_tarball_dependency",
+                path=path,
+                line=line_number,
+                reason="npm dependency resolves from a remote tarball URL; npm v12 requires explicit --allow-remote approval",
+                evidence="<redacted>",
+            )
+        )
+
+    if NPM_GIT_DEPENDENCY_RE.search(line):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.npm_v12_git_dependency",
+                path=path,
+                line=line_number,
+                reason="npm dependency resolves from a Git source; npm v12 requires explicit --allow-git approval",
+                evidence="<redacted>",
+            )
+        )
+
     return findings
 
 
