@@ -39,6 +39,14 @@ matched values.
 - private key block markers
 - generic long `api_key`, `token`, `secret`, or `password` assignments,
   including underscore/dash-delimited names such as `AWS_SECRET_ACCESS_KEY`
+- Astro config loader/C2 patterns in `astro.config.*` and related
+  `.gitignore` helper-artifact hiding, based on reported config-as-code
+  supply-chain abuse
+- OpenClaw dependency versions before `2026.4.23` and risky OpenClaw
+  open-DM/wildcard/unsandboxed configuration lines
+- npm v12 readiness regressions in pushed npm metadata, including old npm pins,
+  Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
+  install-time execution or dependency fetching
 
 All evidence is redacted as `<redacted>`.
 

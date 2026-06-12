@@ -312,6 +312,203 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], _scan_diff(diff_text))
 
+    def test_scan_diff_blocks_astro_config_loader_behavior(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/homepage/astro.config.mjs b/homepage/astro.config.mjs",
+                "index 1111111..2222222 100644",
+                "--- a/homepage/astro.config.mjs",
+                "+++ b/homepage/astro.config.mjs",
+                "@@ -1,0 +1,4 @@",
+                "+import { createRequire } from 'module';",
+                "+const require = createRequire(import.meta.url);",
+                "+const http = require('http');",
+                "+eval(stageBody);",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.astro_config_create_require", rule_ids)
+        self.assertIn("workflow.astro_config_network_loader", rule_ids)
+        self.assertIn("workflow.astro_config_eval_sink", rule_ids)
+
+    def test_scan_diff_blocks_astro_config_hidden_payload_line(self):
+        hidden_tail = " " * 320 + "global['x']=Buffer.from(payload);eval(stageBody);"
+        diff_text = "\n".join(
+            [
+                "diff --git a/astro.config.mjs b/astro.config.mjs",
+                "index 1111111..2222222 100644",
+                "--- a/astro.config.mjs",
+                "+++ b/astro.config.mjs",
+                "@@ -1,0 +1,1 @@",
+                "+export default defineConfig({});" + hidden_tail,
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.astro_config_hidden_payload_line", rule_ids)
+        self.assertIn("workflow.astro_config_eval_sink", rule_ids)
+
+    def test_scan_diff_blocks_gitignore_hidden_pr_tooling(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/.gitignore b/.gitignore",
+                "index 1111111..2222222 100644",
+                "--- a/.gitignore",
+                "+++ b/.gitignore",
+                "@@ -1,0 +1,2 @@",
+                "+branch_structure.json",
+                "+temp_auto_push.bat",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.gitignore_hidden_pr_tooling", rule_ids)
+
+    def test_scan_diff_allows_plain_astro_config(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/astro.config.mjs b/astro.config.mjs",
+                "index 1111111..2222222 100644",
+                "--- a/astro.config.mjs",
+                "+++ b/astro.config.mjs",
+                "@@ -1,0 +1,6 @@",
+                "+import { defineConfig } from 'astro/config';",
+                "+import tailwindcss from '@tailwindcss/vite';",
+                "+export default defineConfig({",
+                "+  site: process.env.SITE_URL || 'https://example.org',",
+                "+  vite: { plugins: [tailwindcss()] },",
+                "+});",
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
+    def test_scan_diff_blocks_openclaw_vulnerable_version(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,5 @@",
+                "+{",
+                "+  \"dependencies\": {",
+                "+    \"openclaw\": \"2026.4.20\"",
+                "+  }",
+                "+}",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.openclaw_vulnerable_version", rule_ids)
+
+    def test_scan_diff_blocks_openclaw_open_dm_wildcard_and_unsandboxed(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/openclaw.yaml b/openclaw.yaml",
+                "index 1111111..2222222 100644",
+                "--- a/openclaw.yaml",
+                "+++ b/openclaw.yaml",
+                "@@ -1,0 +1,2 @@",
+                "+channels: { slack: { dmPolicy: \"open\", allowFrom: [\"*\"] } }",
+                "+agents.defaults.sandbox.mode: \"none\", dmPolicy: \"open\"",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.openclaw_open_dm_wildcard", rule_ids)
+        self.assertIn("workflow.openclaw_open_dm_unsandboxed", rule_ids)
+
+    def test_scan_diff_allows_openclaw_pairing_config_and_fixed_version(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/openclaw.yaml b/openclaw.yaml",
+                "index 1111111..2222222 100644",
+                "--- a/openclaw.yaml",
+                "+++ b/openclaw.yaml",
+                "@@ -1,0 +1,3 @@",
+                "+version: 2026.4.23",
+                "+channels: { slack: { dmPolicy: \"pairing\", allowFrom: [\"U123\"] } }",
+                "+agents.defaults.sandbox.mode: \"non-main\"",
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
+    def test_scan_diff_blocks_npm_v12_old_pin_and_nonregistry_sources(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,8 @@",
+                "+{",
+                "+  \"packageManager\": \"npm@11.15.0\",",
+                "+  \"dependencies\": {",
+                "+    \"tool-a\": \"github:example/tool-a\",",
+                "+    \"tool-b\": \"https://example.invalid/tool-b-1.0.0.tgz\"",
+                "+  }",
+                "+}",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.npm_v12_old_npm_pin", rule_ids)
+        self.assertIn("workflow.npm_v12_git_dependency", rule_ids)
+        self.assertIn("workflow.npm_v12_remote_tarball_dependency", rule_ids)
+
+    def test_scan_diff_blocks_broad_npm_v12_allow_config(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/.npmrc b/.npmrc",
+                "index 1111111..2222222 100644",
+                "--- a/.npmrc",
+                "+++ b/.npmrc",
+                "@@ -1,0 +1,3 @@",
+                "+allow-git=true",
+                "+allow-remote=all",
+                "+allow-scripts=*",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.npm_v12_broad_allow_git", rule_ids)
+        self.assertIn("workflow.npm_v12_broad_allow_remote", rule_ids)
+        self.assertIn("workflow.npm_v12_broad_allow_scripts", rule_ids)
+
+    def test_scan_diff_allows_npm_v12_ready_package_metadata(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,5 @@",
+                "+{",
+                "+  \"packageManager\": \"npm@11.16.0\",",
+                "+  \"dependencies\": { \"left-pad\": \"1.3.0\" }",
+                "+}",
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_ignore_marker_suppresses_secret_and_workflow_rules(self):
         # A line carrying the explicit opt-out marker is skipped by every rule,
         # even when it contains a real token shape and an IOC pattern.
