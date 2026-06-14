@@ -171,6 +171,14 @@ AGENTJACKING_PATTERNS = [
     ),
 ]
 
+KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
+    (
+        "workflow.compromised_npm_package",
+        re.compile(r"(?<![\w@/-])ecto-flag-read(?![\w/-])", re.I),
+        "Known compromised npm package appears in dependency metadata",
+    ),
+]
+
 OTTERCOOKIE_NPM_PATTERNS = [
     (
         "workflow.ottercookie_vercel_c2",
@@ -637,6 +645,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
     findings.extend(_scan_line_for_agentjacking(line, path, line_number))
+    findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
     findings.extend(_scan_line_for_astro_config_c2(line, path, line_number))
     findings.extend(_scan_line_for_openclaw_agent_exposure(line, path, line_number))
@@ -795,6 +804,29 @@ def _scan_line_for_agentjacking(
 
     findings: list[SecretFinding] = []
     for rule_id, pattern, reason in AGENTJACKING_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    return findings
+
+
+def _scan_line_for_known_compromised_npm(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    if not _is_dependency_metadata_path(normalized_path):
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS:
         if pattern.search(line):
             findings.append(
                 SecretFinding(

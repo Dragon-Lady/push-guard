@@ -341,6 +341,41 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], _scan_diff(diff_text))
 
+    def test_scan_diff_blocks_known_compromised_npm_package(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,5 @@",
+                "+{",
+                "+  \"dependencies\": {",
+                "+    \"ecto-flag-read\": \"^1.0.0\"",
+                "+  }",
+                "+}",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.compromised_npm_package", rule_ids)
+
+    def test_scan_diff_allows_markdown_compromised_package_notes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/incidents.md b/docs/incidents.md",
+                "index 1111111..2222222 100644",
+                "--- a/docs/incidents.md",
+                "+++ b/docs/incidents.md",
+                "@@ -1,0 +1,1 @@",
+                "+SupplyChainAttack reported ecto-flag-read as malicious.",
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_scan_diff_blocks_ottercookie_npm_c2_and_backdoor_shapes(self):
         diff_text = "\n".join(
             [
