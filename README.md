@@ -46,6 +46,8 @@ matched values.
   open-DM/wildcard/unsandboxed configuration lines
 - Agentjacking-style Sentry MCP wiring and fake Sentry resolution text that
   tries to make coding agents run `npx` diagnostics
+- known compromised npm package names in dependency metadata, including
+  `ecto-flag-read`
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
   Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
   install-time execution or dependency fetching
