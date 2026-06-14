@@ -44,6 +44,8 @@ matched values.
   supply-chain abuse
 - OpenClaw dependency versions before `2026.4.23` and risky OpenClaw
   open-DM/wildcard/unsandboxed configuration lines
+- Agentjacking-style Sentry MCP wiring and fake Sentry resolution text that
+  tries to make coding agents run `npx` diagnostics
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
   Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
   install-time execution or dependency fetching
