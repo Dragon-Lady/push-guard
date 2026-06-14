@@ -153,6 +153,24 @@ HADES_PYPI_PATTERNS = [
     ),
 ]
 
+AGENTJACKING_PATTERNS = [
+    (
+        "workflow.agentjacking_sentry_mcp_config",
+        re.compile(r"\bsentry\b.*\bmcp\b|\bmcp\b.*\bsentry\b", re.I),
+        "Sentry MCP integration added or changed; review untrusted event-to-agent boundary",
+    ),
+    (
+        "workflow.agentjacking_sentry_resolution_npx",
+        re.compile(r"(?:##\s*Resolution|resolution\s*:).{0,160}\bnpx\b|\bnpx\b.{0,160}(?:##\s*Resolution|resolution\s*:)", re.I),
+        "Agentjacking-style Sentry resolution text attempts npm execution",
+    ),
+    (
+        "workflow.agentjacking_sentry_ingest_mcp",
+        re.compile(r"(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn).{0,160}\bmcp\b|\bmcp\b.{0,160}(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn)", re.I),
+        "Sentry DSN/ingest surface is wired near MCP agent context",
+    ),
+]
+
 OTTERCOOKIE_NPM_PATTERNS = [
     (
         "workflow.ottercookie_vercel_c2",
@@ -618,6 +636,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
 
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
+    findings.extend(_scan_line_for_agentjacking(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
     findings.extend(_scan_line_for_astro_config_c2(line, path, line_number))
     findings.extend(_scan_line_for_openclaw_agent_exposure(line, path, line_number))
@@ -747,6 +766,35 @@ def _scan_line_for_hades_pypi(
         )
 
     for rule_id, pattern, reason in HADES_PYPI_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    return findings
+
+
+def _scan_line_for_agentjacking(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    if normalized_path.lower().endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+    if not (
+        _is_workflow_or_script_path(normalized_path)
+        or _is_dependency_metadata_path(normalized_path)
+        or normalized_path.lower().endswith((".json", ".jsonc", ".toml", ".env"))
+    ):
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in AGENTJACKING_PATTERNS:
         if pattern.search(line):
             findings.append(
                 SecretFinding(
