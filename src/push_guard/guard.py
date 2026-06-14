@@ -140,6 +140,17 @@ HADES_PYPI_PATTERNS = [
         ),  # push-guard: ignore
         "Hades/Miasma GitHub token-monitor persistence marker",
     ),
+    (
+        "workflow.hades_llm_anti_analysis_bait",
+        re.compile(
+            r"(?:unrestricted\s+mode|safety\s+guidelines|guardrails).{0,120}"
+            r"(?:biological|nuclear)\s+weapons?|"
+            r"(?:biological|nuclear)\s+weapons?.{0,120}"
+            r"(?:unrestricted\s+mode|safety\s+guidelines|guardrails)",
+            re.I,
+        ),
+        "Hades-style LLM refusal-bait marker in executable code",
+    ),
 ]
 
 OTTERCOOKIE_NPM_PATTERNS = [
