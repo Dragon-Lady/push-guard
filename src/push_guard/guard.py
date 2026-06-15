@@ -181,6 +181,20 @@ AGENTJACKING_PATTERNS = [
     ),
 ]
 
+COPILOT_REPROMPT_PATTERNS = [
+    (
+        "workflow.copilot_reprompt_qparam_exfil",
+        re.compile(
+            r"(?:copilot\.microsoft\.com|m365\.cloud\.microsoft/chat|microsoft365\.com/chat)"
+            r".{0,120}(?:[?&]q=|%3[fF]q%3[dD]|%26q%3[dD])"
+            r"(?=.{0,520}(?:send\s+to\s+https?://|fetch\s+https?://|post\s+to\s+https?://|exfiltrate|attacker\s+server))"
+            r"(?=.{0,520}(?:recent\s+files|looked\s+at\s+today|where\s+is\s+the\s+user|user\s+location|sharepoint|onedrive))",
+            re.I,
+        ),
+        "Microsoft Copilot q-parameter prompt injection with private-context exfiltration terms",
+    ),
+]
+
 KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
     (
         "workflow.compromised_npm_package",
@@ -690,6 +704,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
     findings.extend(_scan_line_for_agentjacking(line, path, line_number))
+    findings.extend(_scan_line_for_copilot_reprompt(line, path, line_number))
     findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
@@ -852,6 +867,41 @@ def _scan_line_for_agentjacking(
     findings: list[SecretFinding] = []
     for rule_id, pattern, reason in AGENTJACKING_PATTERNS:
         if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    return findings
+
+
+def _scan_line_for_copilot_reprompt(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+    if not (
+        _is_workflow_or_script_path(normalized_path)
+        or _is_dependency_metadata_path(normalized_path)
+        or lowered_path.endswith((".html", ".htm", ".json", ".jsonc", ".toml", ".env"))
+    ):
+        return []
+
+    findings: list[SecretFinding] = []
+    decoded = urllib.parse.unquote(line)
+    candidates = [line]
+    if decoded != line:
+        candidates.append(decoded)
+
+    for rule_id, pattern, reason in COPILOT_REPROMPT_PATTERNS:
+        if any(pattern.search(candidate) for candidate in candidates):
             findings.append(
                 SecretFinding(
                     rule_id=rule_id,
