@@ -217,6 +217,28 @@ OTTERCOOKIE_NPM_PATTERNS = [
     ),
 ]
 
+DPRK_SOCKET_IO_LOADER_PATTERNS = [
+    (
+        "workflow.dprk_socketio_service_fetch",
+        re.compile(r"/api/service", re.I),  # push-guard: ignore
+        "DPRK/Famous Chollima-style Socket.IO loader service path",
+    ),
+    (
+        "workflow.dprk_socketio_0001_stage",
+        re.compile(r"\b0001\.dat\b", re.I),  # push-guard: ignore
+        "DPRK/Famous Chollima-style 0001.dat second-stage payload name",
+    ),
+    (
+        "workflow.dprk_socketio_node_exec",
+        re.compile(
+            r"\bchild_process\b|\b(?:spawn|spawnSync|exec|execFile|execSync)\s*\(|"
+            r"\bprocess\.execPath\b|\bnode\s+[^;&|]*0001\.dat\b",
+            re.I,
+        ),
+        "DPRK/Famous Chollima-style Node execution path near loader code",
+    ),
+]
+
 ASTRO_CONFIG_C2_PATTERNS = [
     (
         "workflow.astro_config_create_require",
@@ -661,6 +683,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
+    findings.extend(_scan_line_for_dprk_socketio_loader(line, path, line_number))
     findings.extend(_scan_line_for_astro_config_c2(line, path, line_number))
     findings.extend(_scan_line_for_openclaw_agent_exposure(line, path, line_number))
     findings.extend(_scan_line_for_npm_v12_readiness(line, path, line_number))
@@ -890,6 +913,35 @@ def _scan_line_for_ottercookie_npm(
 
     findings: list[SecretFinding] = []
     for rule_id, pattern, reason in OTTERCOOKIE_NPM_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+    return findings
+
+
+def _scan_line_for_dprk_socketio_loader(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+    if not (
+        _is_workflow_or_script_path(normalized_path)
+        or _is_dependency_metadata_path(normalized_path)
+        or lowered_path.endswith((".json", ".jsonc", ".env"))
+    ):
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in DPRK_SOCKET_IO_LOADER_PATTERNS:
         if pattern.search(line):
             findings.append(
                 SecretFinding(
