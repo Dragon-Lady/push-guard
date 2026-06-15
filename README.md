@@ -50,6 +50,8 @@ matched values.
   `atomic-lockfile` and `ecto-flag-read`
 - AtomicArch/IronWorm-style AUR `PKGBUILD`, `.SRCINFO`, or `.install` metadata
   that references `atomic-lockfile` or invokes npm/npx loaders for it
+- DPRK/Famous Chollima-style npm loader behavior using Socket.IO,
+  `/api/service`, `0001.dat`, and Node execution paths
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
   Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
   install-time execution or dependency fetching
