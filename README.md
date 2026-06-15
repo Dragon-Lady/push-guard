@@ -47,7 +47,9 @@ matched values.
 - Agentjacking-style Sentry MCP wiring and fake Sentry resolution text that
   tries to make coding agents run `npx` diagnostics
 - known compromised npm package names in dependency metadata, including
-  `ecto-flag-read`
+  `atomic-lockfile` and `ecto-flag-read`
+- AtomicArch/IronWorm-style AUR `PKGBUILD`, `.SRCINFO`, or `.install` metadata
+  that references `atomic-lockfile` or invokes npm/npx loaders for it
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
   Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
   install-time execution or dependency fetching

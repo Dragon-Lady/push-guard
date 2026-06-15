@@ -351,6 +351,7 @@ class PushGuardTests(unittest.TestCase):
                 "@@ -1,0 +1,5 @@",
                 "+{",
                 "+  \"dependencies\": {",
+                "+    \"atomic-lockfile\": \"^0.1.0\",",
                 "+    \"ecto-flag-read\": \"^1.0.0\"",
                 "+  }",
                 "+}",
@@ -362,6 +363,26 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertIn("workflow.compromised_npm_package", rule_ids)
 
+    def test_scan_diff_blocks_atomicarch_aur_pkgbuild_loader(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/aur/orphaned-tool/PKGBUILD b/aur/orphaned-tool/PKGBUILD",
+                "index 1111111..2222222 100644",
+                "--- a/aur/orphaned-tool/PKGBUILD",
+                "+++ b/aur/orphaned-tool/PKGBUILD",
+                "@@ -1,0 +1,3 @@",
+                "+pkgname=orphaned-tool",
+                "+post_install() {",
+                "+  npm install atomic-lockfile",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("workflow.atomicarch_aur_atomic_lockfile", rule_ids)
+        self.assertIn("workflow.atomicarch_aur_npm_loader", rule_ids)
+
     def test_scan_diff_allows_markdown_compromised_package_notes(self):
         diff_text = "\n".join(
             [
@@ -370,7 +391,7 @@ class PushGuardTests(unittest.TestCase):
                 "--- a/docs/incidents.md",
                 "+++ b/docs/incidents.md",
                 "@@ -1,0 +1,1 @@",
-                "+SupplyChainAttack reported ecto-flag-read as malicious.",
+                "+SupplyChainAttack reported ecto-flag-read and atomic-lockfile as malicious.",
             ]
         )
 
