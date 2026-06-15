@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "push-guard"
-version = "0.2.4"
+version = "0.2.5"
 description = "Local pre-push guard for likely secret leaks and private file paths."
 readme = "README.md"
 requires-python = ">=3.11"
