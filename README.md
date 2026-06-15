@@ -54,6 +54,8 @@ matched values.
   `/api/service`, `0001.dat`, and Node execution paths
 - model-scanner refusal/null-result bait in executable package diffs, following
   JFrog's Shai-Hulud prompt-injection-vs-scanner writeup
+- Microsoft Copilot / AI-assistant `q=` links in executable/web/config diffs
+  that combine private-context requests with external exfiltration terms
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
   Git or remote tarball dependency sources, and broad repo `.npmrc` opt-ins for
   install-time execution or dependency fetching
