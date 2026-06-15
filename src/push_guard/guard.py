@@ -151,6 +151,16 @@ HADES_PYPI_PATTERNS = [
         ),
         "Hades-style LLM refusal-bait marker in executable code",
     ),
+    (
+        "workflow.llm_refusal_evasion_bait",
+        re.compile(
+            r"(?:ai\s+(?:security\s+)?scanner|language\s+model|automated\s+scanner|malware\s+scanner)"
+            r".{0,160}(?:must\s+refuse|safety\s+(?:guardrail|policy)|classified\s+documents|weapon\s+systems)"
+            r".{0,160}(?:stop\s+reading|do\s+not\s+analy[sz]e|no\s+verdict|refuse\s+to\s+continue)",
+            re.I,
+        ),
+        "LLM scanner refusal/null-result bait marker in executable code",
+    ),
 ]
 
 AGENTJACKING_PATTERNS = [
