@@ -134,8 +134,20 @@ exec python -m push_guard --repo "$(git rev-parse --show-toplevel)"
 
 ## Run Manually
 
-The CLI expects Git `pre-push` input on stdin. Manual dry runs are best done from
-an actual hook or a test fixture.
+Cloud workspaces and restricted agents can scan committed work without push
+access. Choose the trusted base explicitly:
+
+```sh
+push-guard scan --repo . --base origin/main --head HEAD
+```
+
+This scans the selected committed diff and the head tree's private-path rules.
+It does not scan uncommitted working-tree changes. Commit locally first, then
+run the command. Project-specific `.push-guard-private-paths` rules remain local
+unless that ignored file is separately provisioned in the workspace.
+
+The backward-compatible hook mode expects Git `pre-push` input on stdin. Manual
+hook dry runs are best done from an actual hook or a test fixture.
 
 ```sh
 python -m push_guard --repo /path/to/repo
