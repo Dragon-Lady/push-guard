@@ -464,6 +464,28 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
     return findings
 
 
+def scan_git_range(
+    repo: str | Path,
+    base_ref: str,
+    head_ref: str = "HEAD",
+) -> list[SecretFinding]:
+    """Scan committed changes between two refs without invoking git push."""
+    repo_path = _resolve_git_root(Path(repo))
+    base_sha = _resolve_commit(repo_path, base_ref)
+    head_sha = _resolve_commit(repo_path, head_ref)
+    findings: list[SecretFinding] = []
+    for diff_text in _diffs_for_push_ref(repo_path, head_sha, base_sha):
+        findings.extend(_scan_diff(diff_text))
+    findings.extend(
+        _scan_tree_for_private_paths(
+            repo_path,
+            head_sha,
+            load_private_path_patterns(repo_path),
+        )
+    )
+    return findings
+
+
 def _scan_tree_for_private_paths(
     repo: Path, local_sha: str, patterns: list[str]
 ) -> list[SecretFinding]:
@@ -499,6 +521,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "install":
         return _install_main(argv[1:])
+    if argv and argv[0] == "scan":
+        return _scan_main(argv[1:])
     if argv and argv[0] in {"-h", "--help"}:
         _print_help()
         return 0
@@ -555,6 +579,52 @@ def _pre_push_main(argv: list[str]) -> int:
         "then retry.",
         file=sys.stderr,
     )
+    return 1
+
+
+def _scan_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="push-guard scan",
+        description="Scan a committed Git range without attempting a push.",
+    )
+    parser.add_argument(
+        "--repo",
+        default=".",
+        help="Repository path. Defaults to current directory.",
+    )
+    parser.add_argument(
+        "--base",
+        required=True,
+        help="Trusted base ref, such as origin/main.",
+    )
+    parser.add_argument(
+        "--head",
+        default="HEAD",
+        help="Candidate head ref. Defaults to HEAD.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        findings = scan_git_range(args.repo, args.base, args.head)
+    except RuntimeError as exc:
+        print("Push Guard could not inspect this range.", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        print("Blocking publication because inspection failed.", file=sys.stderr)
+        return 1
+
+    if not findings:
+        print(f"Push Guard found no blocking findings in {args.base}..{args.head}.")
+        return 0
+
+    print("Push Guard blocked this range. Secret values are redacted.", file=sys.stderr)
+    for finding in findings:
+        line_suffix = f":{finding.line}" if finding.line else ""
+        print(
+            f"- {finding.rule_id} at {finding.path}{line_suffix} "
+            f"({finding.reason}; {finding.evidence})",
+            file=sys.stderr,
+        )
+    print("Review the reported paths locally before publication.", file=sys.stderr)
     return 1
 
 
@@ -648,9 +718,10 @@ def _hook_body() -> str:
 def _print_help() -> None:
     print(
         "usage: push-guard [--repo REPO]\n"
+        "       push-guard scan --base REF [--head REF] [--repo REPO]\n"
         "       push-guard install [--repo REPO] [--force] [--allow-home-repo]\n\n"
-        "Local pre-push secret guard. Run from a Git pre-push hook, or install\n"
-        "the hook with `push-guard install`."
+        "Local secret guard. Scan a committed range, run from a Git pre-push\n"
+        "hook, or install the hook with `push-guard install`."
     )
 
 
@@ -1378,6 +1449,15 @@ def _resolve_git_root(repo: Path) -> Path:
     if not root:
         raise PushGuardInspectionError("git rev-parse --show-toplevel returned no path")
     return Path(root)
+
+
+def _resolve_commit(repo: Path, ref: str) -> str:
+    if not ref or ref.startswith("-") or any(character.isspace() for character in ref):
+        raise PushGuardInspectionError(f"Invalid Git ref: {ref!r}")
+    sha = _run_git(repo, ["rev-parse", "--verify", f"{ref}^{{commit}}"]).strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise PushGuardInspectionError(f"Git ref did not resolve to a commit: {ref}")
+    return sha.lower()
 
 
 def _run_rev_parse_show_toplevel(
