@@ -48,6 +48,9 @@ matched values.
   tries to make coding agents run `npx` diagnostics
 - known compromised npm package names in dependency metadata, including
   `atomic-lockfile` and `ecto-flag-read`
+- July 2026 malicious npm names and exact compromised `jscrambler`, Injective,
+  and payment-SDK versions, plus reverse-shell shapes embedded directly in
+  package manifest lifecycle scripts
 - AtomicArch/IronWorm-style AUR `PKGBUILD`, `.SRCINFO`, or `.install` metadata
   that references `atomic-lockfile` or invokes npm/npx loaders for it
 - DPRK/Famous Chollima-style npm loader behavior using Socket.IO,
