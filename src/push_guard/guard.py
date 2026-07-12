@@ -1376,23 +1376,28 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str
         ).splitlines()
         if not commits:
             commits = [local_sha]
-        return [
-            _run_git(repo, ["show", "--format=", "--unified=0", "--no-ext-diff", commit])
-            for commit in commits
-        ]
+    else:
+        # Scan every commit object introduced by the update. An endpoint diff
+        # misses a secret added in one commit and removed again before HEAD.
+        commits = _run_git(
+            repo,
+            ["rev-list", "--reverse", local_sha, f"^{remote_sha}"],
+        ).splitlines()
 
     return [
         _run_git(
             repo,
             [
-                "diff",
+                "show",
+                "--format=",
                 "--unified=0",
                 "--no-ext-diff",
+                "--diff-merges=first-parent",
                 "--diff-filter=ACMRT",
-                remote_sha,
-                local_sha,
+                commit,
             ],
         )
+        for commit in commits
     ]
 
 
