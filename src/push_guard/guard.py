@@ -201,6 +201,36 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
         re.compile(r"(?<![\w@/-])(?:atomic-lockfile|ecto-flag-read)(?![\w/-])", re.I),
         "Known compromised npm package appears in dependency metadata",
     ),
+    (
+        "workflow.july_malicious_npm_package",
+        re.compile(
+            r"(?<![\w@/-])(?:paperclip2|vps-maintenance(?:-paperclip-adapter)?|polymarket-kit|"
+            r"rollup-packages-polyfill-core|rollup-runtime-polyfill-core|swift-parse-stream|"
+            r"quirky-token|react-icon-svgs|rollup-plugin-polyfill-connect)(?![\w/-])",
+            re.I,
+        ),
+        "July 2026 malicious npm package appears in dependency metadata",
+    ),
+    (
+        "workflow.july_compromised_npm_version",
+        re.compile(
+            r"(?:[\"']jscrambler[\"']\s*:\s*[\"'](?:8\.14\.0|8\.16\.0|8\.17\.0|8\.18\.0|8\.20\.0)[\"']|"
+            r"[\"']@injectivelabs/[^\"']+[\"']\s*:\s*[\"']1\.20\.21[\"']|"
+            r"[\"'](?:paysafe-(?:checkout|vault|js|api|node|cards|fraud|kyc|payments)|neteller|skrill(?:-payments|-sdk)?)[\"']"
+            r"\s*:\s*[\"']1\.0\.[0-3][\"'])",
+            re.I,
+        ),
+        "July 2026 compromised npm package version appears in dependency metadata",
+    ),
+    (
+        "workflow.manifest_reverse_shell_lifecycle",
+        re.compile(
+            r"[\"'](?:preinstall|install|postinstall|prepare)[\"']\s*:\s*[\"'][^\"']*"
+            r"(?:/dev/tcp/|\bbash\s+-i\b|\bnc\s+(?:-[^\s]+\s+)*-e\b|\bsocat\b[^\"']*\bexec:)",
+            re.I,
+        ),
+        "Package manifest lifecycle script contains a reverse-shell execution shape",
+    ),
 ]
 
 ATOMIC_ARCH_AUR_PATTERNS = [

