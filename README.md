@@ -141,7 +141,8 @@ access. Choose the trusted base explicitly:
 push-guard scan --repo . --base origin/main --head HEAD
 ```
 
-This scans the selected committed diff and the head tree's private-path rules.
+This scans every commit introduced by `base..head`, including content added in
+one commit and removed before the head, plus the head tree's private-path rules.
 It does not scan uncommitted working-tree changes. Commit locally first, then
 run the command. Project-specific `.push-guard-private-paths` rules remain local
 unless that ignored file is separately provisioned in the workspace.
@@ -160,9 +161,9 @@ python -m push_guard --repo /path/to/repo
   `secret = mySuperLongFunctionCallHereWithNoSpaces` can match the generic
   assignment rule.
 - If a hook is installed from a Git subdirectory, Git may resolve `--repo` to a
-  parent repository root. This is acceptable for current diff-only scanning, but
-  future path-relative features such as allowlists or report output must resolve
-  and document the canonical Git root first.
+  parent repository root. Push Guard canonicalizes the root before commit and
+  private-path inspection; future path-relative features must preserve that
+  behavior.
 - It blocks likely matches; it does not rotate exposed credentials.
 - If a real secret was committed, rotate from a clean context after removing it.
 - It should be treated as a seatbelt, not a guarantee.

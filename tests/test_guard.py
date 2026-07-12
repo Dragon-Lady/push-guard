@@ -2,7 +2,7 @@ import sys
 import unittest
 from io import StringIO
 from pathlib import Path
-from subprocess import CalledProcessError, CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess, run
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
@@ -857,6 +857,40 @@ class PushGuardTests(unittest.TestCase):
             patch("push_guard.guard.load_private_path_patterns", return_value=[]),
         ):
             findings = scan_git_range(".", "origin/main", "HEAD")
+
+        self.assertEqual(1, len(findings))
+        self.assertEqual("secret.github_token", findings[0].rule_id)
+        self.assertNotIn(secret, findings[0].evidence)
+
+    def test_scan_git_range_catches_secret_removed_before_head(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+
+            def git(*args: str) -> str:
+                return run(
+                    ["git", "-C", str(repo), *args],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                ).stdout.strip()
+
+            git("init", "-b", "main")
+            git("config", "user.name", "Push Guard Test")
+            git("config", "user.email", "push-guard@example.invalid")
+            (repo / "README.md").write_text("safe baseline\n", encoding="utf-8")
+            git("add", "README.md")
+            git("commit", "-m", "baseline")
+            base_sha = git("rev-parse", "HEAD")
+
+            secret = "gh" + "p_" + "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"  # push-guard: ignore
+            (repo / "config.py").write_text(f"token = '{secret}'\n", encoding="utf-8")
+            git("add", "config.py")
+            git("commit", "-m", "add configuration")
+            (repo / "config.py").unlink()
+            git("add", "-u")
+            git("commit", "-m", "remove configuration")
+
+            findings = scan_git_range(repo, base_sha, "HEAD")
 
         self.assertEqual(1, len(findings))
         self.assertEqual("secret.github_token", findings[0].rule_id)
