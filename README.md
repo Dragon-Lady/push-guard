@@ -7,6 +7,15 @@ matched values, and exits nonzero so Git blocks the push.
 
 > Built and maintained by Dragon Lady - [github.com/Dragon-Lady](https://github.com/Dragon-Lady) - X: [@answerislove2](https://x.com/answerislove2)
 
+## Website
+
+Public landing page: [push-guard.netlify.app](https://push-guard.netlify.app/)
+
+The static project landing page lives in [`docs/`](docs/) and has no runtime
+dependencies, external scripts, analytics, or remote assets. It can be served
+with GitHub Pages from the `docs/` directory or deployed to Netlify using the
+included `netlify.toml` (no build command; publish directory `docs`).
+
 ## Posture
 
 - Local only.

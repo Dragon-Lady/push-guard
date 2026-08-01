@@ -13,3 +13,6 @@ dist/
 .env.*
 *.secret
 *.key
+
+# Local Netlify folder
+.netlify

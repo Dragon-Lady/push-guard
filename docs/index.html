@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1016">
+  <meta name="description" content="Push Guard is a local Git pre-push guard that catches likely secrets and private paths before code leaves your machine.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Push Guard | Stop likely secret leaks before push">
+  <meta property="og:description" content="Local-only Git protection. Redacted findings. Zero telemetry. No file mutation.">
+  <meta property="og:url" content="https://push-guard.netlify.app/">
+  <meta property="og:image" content="https://push-guard.netlify.app/og-push-guard.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Push Guard local pre-push protection with a synthetic redacted finding">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Push Guard | Local pre-push protection">
+  <meta name="twitter:description" content="A practical seatbelt for the moment before code leaves your machine.">
+  <meta name="twitter:image" content="https://push-guard.netlify.app/og-push-guard.png">
+  <link rel="canonical" href="https://push-guard.netlify.app/">
+  <title>Push Guard | Stop likely secret leaks before push</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Push Guard home">
+      <span class="brand-mark" aria-hidden="true">PG</span>
+      <span>Push Guard</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary navigation">
+      <a href="#how">How it works</a>
+      <a href="#coverage">Coverage</a>
+      <a href="#proof">Proof</a>
+      <a href="#limits">Limits</a>
+      <a class="nav-cta" href="https://github.com/Dragon-Lady/push-guard" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source alpha · v0.3.2</p>
+        <h1 id="hero-title">Stop the secret.<br><span>Keep the push.</span></h1>
+        <p class="hero-subtitle">A local Git seatbelt for the moment before code leaves your machine.</p>
+        <p class="hero-text">
+          Push Guard inspects the committed content you are about to publish, catches likely
+          secrets and private paths, redacts every matched value, and lets Git stop the push.
+          No cloud scanner. No telemetry. No copied credentials.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#quickstart">Install locally</a>
+          <a class="button secondary" href="https://github.com/Dragon-Lady/push-guard" target="_blank" rel="noreferrer">Inspect the source</a>
+        </div>
+        <ul class="promise-row" aria-label="Core guarantees">
+          <li>Local only</li>
+          <li>Findings redacted</li>
+          <li>Zero telemetry</li>
+          <li>No target mutation</li>
+        </ul>
+      </div>
+
+      <div class="hero-visual" aria-label="Illustration of Push Guard inspecting a Git push">
+        <div class="terminal-card">
+          <div class="terminal-bar">
+            <span></span><span></span><span></span>
+            <strong>pre-push</strong>
+          </div>
+          <div class="terminal-body" aria-hidden="true">
+            <p><span class="prompt">$</span> git push origin main</p>
+            <p class="dim">Inspecting committed range…</p>
+            <div class="finding">
+              <span class="finding-icon">!</span>
+              <div>
+                <strong>Push blocked safely</strong>
+                <p>secret.github_token</p>
+                <code>config/example.env:12 · &lt;redacted&gt;</code>
+              </div>
+            </div>
+            <p class="resolution"><span>↳</span> Review locally. Rotate if real. Push when safe.</p>
+          </div>
+        </div>
+        <div class="guard-seal" aria-hidden="true">
+          <span class="shield">PG</span>
+          <span class="seal-copy">LOCAL GATE · REDACTED PROOF</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="impact-band" aria-label="Push Guard positioning">
+      <p>Your final check should protect the secret—not collect another copy of it.</p>
+    </section>
+
+    <section class="section split" id="how">
+      <div class="section-copy">
+        <p class="section-kicker">Operating model</p>
+        <h2>One local gate.<br>Three clear moves.</h2>
+        <p>
+          Push Guard runs as a repository-level <code>pre-push</code> hook or an explicit
+          range scan. It reads through Git, reports only the location and rule that matched,
+          and exits nonzero when review is needed. Git performs the block; your files remain yours.
+        </p>
+        <a class="text-link" href="https://github.com/Dragon-Lady/push-guard#posture" target="_blank" rel="noreferrer">Read the full security posture <span aria-hidden="true">→</span></a>
+      </div>
+      <ol class="flow-panel" aria-label="Push Guard request flow">
+        <li>
+          <span class="step-number">01</span>
+          <div>
+            <strong>Inspect the push range</strong>
+            <p>Scan every introduced commit plus the pushed tip tree for private paths.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-number">02</span>
+          <div>
+            <strong>Report without revealing</strong>
+            <p>Show rule ID, path, line, and reason. Replace the matched value with <code>&lt;redacted&gt;</code>.</p>
+          </div>
+        </li>
+        <li>
+          <span class="step-number">03</span>
+          <div>
+            <strong>Let Git hold the door</strong>
+            <p>Exit nonzero so Git blocks publication until the developer reviews the finding.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="trust-grid" aria-label="Trust boundaries">
+      <article>
+        <span class="card-index">01</span>
+        <h3>No network calls</h3>
+        <p>The scanner runs locally and sends nothing to Push Guard or any other service.</p>
+      </article>
+      <article>
+        <span class="card-index">02</span>
+        <h3>No retained secrets</h3>
+        <p>Matched values are replaced with a literal redaction marker and are not written to a report.</p>
+      </article>
+      <article>
+        <span class="card-index">03</span>
+        <h3>No file mutation</h3>
+        <p>Push Guard reads commit data. It does not edit source, rewrite history, or rotate credentials.</p>
+      </article>
+      <article>
+        <span class="card-index">04</span>
+        <h3>No false certainty</h3>
+        <p>A clean result is not a security guarantee. Push Guard is a seatbelt, not a certification.</p>
+      </article>
+    </section>
+
+    <section class="section quickstart" id="quickstart">
+      <div class="section-copy">
+        <p class="section-kicker">Quick start</p>
+        <h2>Two commands.<br>One guarded repo.</h2>
+        <p>
+          Install the package, then install the hook from the repository you want to protect.
+          Push Guard refuses to overwrite an unmanaged existing hook.
+        </p>
+      </div>
+      <div class="code-stack">
+        <div class="code-card">
+          <span>Install</span>
+          <pre><code><b>$</b> pip install push-guard</code></pre>
+        </div>
+        <div class="code-card">
+          <span>Protect the current repository</span>
+          <pre><code><b>$</b> cd /path/to/repository
+<b>$</b> push-guard install</code></pre>
+        </div>
+        <div class="code-card subdued">
+          <span>Cloud or manual range scan</span>
+          <pre><code><b>$</b> push-guard scan --repo . \
+    --base origin/main --head HEAD</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section coverage" id="coverage">
+      <div class="coverage-heading">
+        <div>
+          <p class="section-kicker">Current coverage</p>
+          <h2>More than token prefixes.</h2>
+        </div>
+        <p>
+          Provider-shaped credentials are only the first layer. Push Guard also watches private
+          path rules and high-signal supply-chain patterns in executable and package metadata.
+        </p>
+      </div>
+      <div class="coverage-grid">
+        <article>
+          <span class="coverage-mark secret" aria-hidden="true">KEY</span>
+          <h3>Likely secrets</h3>
+          <p>GitHub, OpenAI-style, AWS, private-key markers, and long credential assignments.</p>
+        </article>
+        <article>
+          <span class="coverage-mark path" aria-hidden="true">PATH</span>
+          <h3>Private paths</h3>
+          <p>Common credential files plus local, git-ignored patterns tailored to each repository.</p>
+        </article>
+        <article>
+          <span class="coverage-mark chain" aria-hidden="true">PKG</span>
+          <h3>Supply-chain signals</h3>
+          <p>Known compromised packages, risky lifecycle shapes, and malicious loader behavior.</p>
+        </article>
+        <article>
+          <span class="coverage-mark agent" aria-hidden="true">AI</span>
+          <h3>Agent-facing traps</h3>
+          <p>High-signal prompt-injection and agentjacking shapes in executable or configuration diffs.</p>
+        </article>
+      </div>
+      <a class="text-link" href="https://github.com/Dragon-Lady/push-guard#current-signals" target="_blank" rel="noreferrer">See every current signal in the README <span aria-hidden="true">→</span></a>
+    </section>
+
+    <section class="guard-family" aria-labelledby="family-title">
+      <div>
+        <p class="section-kicker">Part of the guard family</p>
+        <h2 id="family-title">One practical gate in a wider defensive toolkit.</h2>
+      </div>
+      <ul aria-label="Related Dragon Lady projects">
+        <li>Linux Supply Chain Guard</li>
+        <li>Browser Exposure Guard</li>
+        <li>OpenClaw Exposure Guard</li>
+        <li>Game Mod Guard</li>
+        <li>Prompt Injection Blocker</li>
+        <li>Actions Warden</li>
+        <li>Net Ward</li>
+        <li>Never-Ending Story</li>
+      </ul>
+    </section>
+
+    <section class="section proof" id="proof">
+      <div class="proof-copy">
+        <p class="section-kicker">Proof, not promises</p>
+        <h2>Small enough to inspect.<br>Tested enough to trust carefully.</h2>
+        <p>
+          The public repository contains the scanner, install path, tests, limitations, and release
+          history. Start with the code. Verify the behavior. Keep the override for findings you have
+          intentionally reviewed.
+        </p>
+        <div class="proof-actions">
+          <a class="button secondary" href="https://github.com/Dragon-Lady/push-guard/tree/main/tests" target="_blank" rel="noreferrer">Review the tests</a>
+          <a class="button secondary" href="https://pypi.org/project/push-guard/" target="_blank" rel="noreferrer">View on PyPI</a>
+        </div>
+      </div>
+      <div class="metric-grid" aria-label="Release evidence">
+        <article>
+          <span>Current release</span>
+          <strong>v0.3.2</strong>
+          <p>Tagged public package.</p>
+        </article>
+        <article>
+          <span>Local test gate</span>
+          <strong>64 / 64</strong>
+          <p>Passing on this release checkout.</p>
+        </article>
+        <article>
+          <span>Secret values retained</span>
+          <strong>0</strong>
+          <p>Findings use <code>&lt;redacted&gt;</code>.</p>
+        </article>
+        <article>
+          <span>Telemetry calls</span>
+          <strong>0</strong>
+          <p>No project analytics or uploads.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section limits" id="limits">
+      <div>
+        <p class="section-kicker">Known limits</p>
+        <h2>Honest at the edges.</h2>
+      </div>
+      <div class="limits-list">
+        <p><span>01</span> Pattern matching can miss secrets or flag long non-secret identifiers.</p>
+        <p><span>02</span> It scans committed push ranges, not uncommitted working-tree changes.</p>
+        <p><span>03</span> It does not remove a committed secret or rotate a credential after exposure.</p>
+        <p><span>04</span> <code>git push --no-verify</code> remains available after deliberate human review.</p>
+      </div>
+    </section>
+
+    <section class="section faq" aria-labelledby="faq-title">
+      <p class="section-kicker">Questions developers ask first</p>
+      <h2 id="faq-title">Clear answers before installation.</h2>
+      <details>
+        <summary>Does Push Guard upload my repository?</summary>
+        <p>No. It runs locally, uses Git only to read commit data, and makes no network calls.</p>
+      </details>
+      <details>
+        <summary>Will a finding print my secret into the terminal?</summary>
+        <p>No. The matched value is replaced with <code>&lt;redacted&gt;</code>. The output identifies the rule, file, line, and reason so you can inspect locally.</p>
+      </details>
+      <details>
+        <summary>Does it overwrite my existing pre-push hook?</summary>
+        <p>Not by default. Installation refuses an unmanaged existing hook so you can preserve and chain it intentionally.</p>
+      </details>
+      <details>
+        <summary>Can I add private project paths without publishing their names?</summary>
+        <p>Yes. Put local patterns in the git-ignored <code>.push-guard-private-paths</code> file at the repository root.</p>
+      </details>
+      <details>
+        <summary>Does a clean result prove my repository is safe?</summary>
+        <p>No. It is one local publication gate, not a complete secret-management or supply-chain security program.</p>
+      </details>
+    </section>
+
+    <section class="final-cta">
+      <div>
+        <p class="section-kicker">Before the next push</p>
+        <h2>Keep the review local.</h2>
+        <p>Inspect the source, install it per repository, and let the human remain the final decision-maker.</p>
+      </div>
+      <div class="final-actions">
+        <a class="button primary" href="https://github.com/Dragon-Lady/push-guard" target="_blank" rel="noreferrer">Open the repository</a>
+        <a class="text-link light" href="https://github.com/sponsors/Dragon-Lady" target="_blank" rel="noreferrer">Sponsor Dragon Lady <span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand" href="#top">
+      <span class="brand-mark" aria-hidden="true">PG</span>
+      <span>Push Guard</span>
+    </a>
+    <p>Local pre-push protection. Apache-2.0.</p>
+    <nav aria-label="Footer navigation">
+      <a href="https://github.com/Dragon-Lady/push-guard" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://pypi.org/project/push-guard/" target="_blank" rel="noreferrer">PyPI</a>
+      <a href="https://github.com/Dragon-Lady/push-guard/issues" target="_blank" rel="noreferrer">Issues</a>
+      <a href="https://github.com/sponsors/Dragon-Lady" target="_blank" rel="noreferrer">Sponsor</a>
+    </nav>
+  </footer>
+</body>
+</html>

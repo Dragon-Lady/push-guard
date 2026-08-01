@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Push Guard social card</title>
+  <link rel="stylesheet" href="social-card.css">
+</head>
+<body>
+  <main>
+    <section class="copy">
+      <div class="brand"><span>PG</span> Push Guard</div>
+      <p class="eyebrow">LOCAL PRE-PUSH PROTECTION · V0.3.2</p>
+      <h1>Stop the secret.<br><strong>Keep the push.</strong></h1>
+      <p class="subhead">Local only · Redacted findings · Zero telemetry</p>
+    </section>
+    <section class="terminal" aria-label="Synthetic Push Guard output">
+      <div class="bar"><i></i><i></i><i></i><span>pre-push</span></div>
+      <div class="body">
+        <p><b>$</b> git push origin main</p>
+        <p class="dim">Inspecting committed range…</p>
+        <div class="finding">
+          <em>!</em>
+          <div><strong>Push blocked safely</strong><small>secret.github_token</small><code>config/example.env:12 · &lt;redacted&gt;</code></div>
+        </div>
+        <p class="resolve">↳ Review locally. Push when safe.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
