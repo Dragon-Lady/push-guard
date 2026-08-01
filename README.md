@@ -9,6 +9,8 @@ matched values, and exits nonzero so Git blocks the push.
 
 ## Website
 
+Public landing page: [push-guard.netlify.app](https://push-guard.netlify.app/)
+
 The static project landing page lives in [`docs/`](docs/) and has no runtime
 dependencies, external scripts, analytics, or remote assets. It can be served
 with GitHub Pages from the `docs/` directory or deployed to Netlify using the
