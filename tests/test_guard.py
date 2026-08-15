@@ -10,7 +10,9 @@ from push_guard.guard import (
     PRIVATE_PATH_DEFAULTS,
     _resolve_git_root,
     _scan_diff,
+    _scan_line_for_blocked_terms,
     install_pre_push_hook,
+    load_blocked_terms,
     load_private_path_patterns,
     main,
     path_matches_private,
@@ -422,6 +424,55 @@ class PushGuardTests(unittest.TestCase):
         rule_ids = {finding.rule_id for finding in _scan_diff(diff_text)}
         self.assertIn("workflow.july_malicious_npm_package", rule_ids)
         self.assertIn("workflow.july_compromised_npm_version", rule_ids)
+
+    def test_scan_diff_blocks_august_keyv_compromised_versions(self):
+        """Vendor-verified Aug 2026 seed wave: keyv@6.0.0 + ten related exact versions."""
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,14 @@",
+                "+{",
+                "+  \"dependencies\": {",
+                "+    \"keyv\": \"6.0.0\",",
+                "+    \"flat-cache\": \"6.1.24\",",
+                "+    \"file-entry-cache\": \"11.1.6\",",
+                "+    \"cacheable-request\": \"13.0.20\",",
+                "+    \"cacheable\": \"2.5.1\",",
+                "+    \"@cacheable/memory\": \"2.2.1\",",
+                "+    \"cache-manager\": \"7.2.10\",",
+                "+    \"@cacheable/node-cache\": \"3.1.2\",",
+                "+    \"@cacheable/utils\": \"2.5.1\",",
+                "+    \"@cacheable/net\": \"2.1.1\",",
+                "+    \"ecto\": \"5.0.1\"",
+                "+  }",
+                "+}",
+            ]
+        )
+
+        findings = _scan_diff(diff_text)
+        rule_ids = {finding.rule_id for finding in findings}
+        self.assertIn("workflow.august_keyv_compromised_npm_version", rule_ids)
+        # Safe neighboring versions of the same package names must not trip the seed rule.
+        safe_diff = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "index 1111111..2222222 100644",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,5 @@",
+                "+{",
+                "+  \"dependencies\": {",
+                "+    \"keyv\": \"5.5.0\",",
+                "+    \"cacheable\": \"2.4.0\"",
+                "+  }",
+                "+}",
+            ]
+        )
+        safe_ids = {finding.rule_id for finding in _scan_diff(safe_diff)}
+        self.assertNotIn("workflow.august_keyv_compromised_npm_version", safe_ids)
 
     def test_scan_diff_blocks_manifest_only_reverse_shell_lifecycle(self):
         diff_text = "\n".join(
@@ -1073,3 +1124,48 @@ class PushGuardTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             patterns = load_private_path_patterns(Path(tmpdir))
         self.assertEqual(PRIVATE_PATH_DEFAULTS, patterns)
+
+    def test_blocked_term_redacts_and_flags_added_line(self):
+        findings = _scan_line_for_blocked_terms(
+            "lane naming used a house given-name here",
+            "README.md",
+            3,
+            ["given-name"],
+        )
+        self.assertEqual(1, len(findings))
+        self.assertEqual("personal.blocked_term", findings[0].rule_id)
+        self.assertEqual("<redacted>", findings[0].evidence)
+        self.assertNotIn("given-name", findings[0].evidence)
+
+    def test_blocked_term_respects_ignore_marker(self):
+        findings = _scan_line_for_blocked_terms(
+            "given-name  # push-guard: ignore",
+            "README.md",
+            1,
+            ["given-name"],
+        )
+        self.assertEqual([], findings)
+
+    def test_load_blocked_terms_reads_repo_file(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".push-guard-blocked-terms").write_text(
+                "# local\ngiven-name\n\nseat-nick\n",
+                encoding="utf-8",
+            )
+            terms = load_blocked_terms(repo)
+        self.assertIn("given-name", terms)
+        self.assertIn("seat-nick", terms)
+
+    def test_scan_diff_blocked_term_on_added_line(self):
+        diff = "\n".join(
+            [
+                "diff --git a/README.md b/README.md",
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1,0 +1,1 @@",
+                "+hub pull --lane given-name",
+            ]
+        )
+        findings = _scan_diff(diff, blocked_terms=["given-name"])
+        self.assertTrue(any(f.rule_id == "personal.blocked_term" for f in findings))

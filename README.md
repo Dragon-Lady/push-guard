@@ -60,6 +60,10 @@ matched values.
 - July 2026 malicious npm names and exact compromised `jscrambler`, Injective,
   and payment-SDK versions, plus reverse-shell shapes embedded directly in
   package manifest lifecycle scripts
+- August 4, 2026 keyv / cacheable (ChainDrop / Shai-Hulud) **exact** seed versions
+  only (`keyv@6.0.0` and ten related jaredwray-family releases verified by Snyk,
+  StepSecurity, Aikido, Wiz, and JFrog). Does not block all versions of those
+  package names; full campaign inventory is larger (Ox / Wiz)
 - AtomicArch/IronWorm-style AUR `PKGBUILD`, `.SRCINFO`, or `.install` metadata
   that references `atomic-lockfile` or invokes npm/npx loaders for it
 - DPRK/Famous Chollima-style npm loader behavior using Socket.IO,
@@ -105,6 +109,26 @@ internal-handoff/
 Match rules: a trailing-slash pattern matches that directory anywhere; a glob
 (`*`, `?`, `[`) matches the full path and the basename; a plain token matches an
 exact basename or path segment.
+
+A file that is **gitignored** but still present in the pushed tree (force-add)
+is also blocked (`private_path.gitignored`).
+
+## Personal / house terms (local list)
+
+Token shapes miss a name in a README. Keep a **git-ignored** list of terms:
+
+- repo: `.push-guard-blocked-terms`
+- user: `~/.config/push-guard/blocked-terms`
+
+One term per line. Added diff lines are scanned; matches are reported as
+`<redacted>`. Those names stay off PyPI and off git. Use
+`# push-guard: ignore` on a line that must keep a term.
+
+```
+# .push-guard-blocked-terms  (gitignored)
+house-given-name
+seat-nickname
+```
 
 ## Install
 
@@ -183,3 +207,9 @@ python -m push_guard --repo /path/to/repo
 ## License
 
 Apache-2.0.
+
+## Related read-only tooling
+
+Complementary **read-only** tools in the same security kit:
+
+- **actions-warden** (PyPI, Dragon Lady) — read-only auditor for risky or injected GitHub Actions workflow config under `.github/workflows/`. After token theft, CI injection is a common next step. `pipx install actions-warden` then `actions-warden /path/to/repo`. Does not execute workflows or modify files. https://github.com/Dragon-Lady/actions-warden · https://pypi.org/project/actions-warden/

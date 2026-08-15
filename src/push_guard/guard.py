@@ -223,6 +223,27 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
         "July 2026 compromised npm package version appears in dependency metadata",
     ),
     (
+        # August 4, 2026 keyv/cacheable ChainDrop seed carriers only (exact versions).
+        # Vendor-verified initial full-worm wave: keyv@6.0.0 + ten jaredwray-family
+        # releases. Full inventory is larger (Ox/Wiz); seed set only for push block.
+        "workflow.august_keyv_compromised_npm_version",
+        re.compile(
+            r"(?:[\"']keyv[\"']\s*:\s*[\"']6\.0\.0[\"']|"
+            r"[\"']flat-cache[\"']\s*:\s*[\"']6\.1\.24[\"']|"
+            r"[\"']file-entry-cache[\"']\s*:\s*[\"']11\.1\.6[\"']|"
+            r"[\"']cacheable-request[\"']\s*:\s*[\"']13\.0\.20[\"']|"
+            r"[\"']cacheable[\"']\s*:\s*[\"']2\.5\.1[\"']|"
+            r"[\"']@cacheable/memory[\"']\s*:\s*[\"']2\.2\.1[\"']|"
+            r"[\"']cache-manager[\"']\s*:\s*[\"']7\.2\.10[\"']|"
+            r"[\"']@cacheable/node-cache[\"']\s*:\s*[\"']3\.1\.2[\"']|"
+            r"[\"']@cacheable/utils[\"']\s*:\s*[\"']2\.5\.1[\"']|"
+            r"[\"']@cacheable/net[\"']\s*:\s*[\"']2\.1\.1[\"']|"
+            r"[\"']ecto[\"']\s*:\s*[\"']5\.0\.1[\"'])",
+            re.I,
+        ),
+        "August 2026 keyv/cacheable (ChainDrop) compromised npm package version appears in dependency metadata",
+    ),
+    (
         "workflow.manifest_reverse_shell_lifecycle",
         re.compile(
             r"[\"'](?:preinstall|install|postinstall|prepare)[\"']\s*:\s*[\"'][^\"']*"
@@ -401,6 +422,8 @@ PRIVATE_PATH_DEFAULTS = [
 SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template", ".env.dist"}
 
 PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
+BLOCKED_TERMS_CONFIG = ".push-guard-blocked-terms"
+USER_BLOCKED_TERMS = Path.home() / ".config" / "push-guard" / "blocked-terms"
 
 
 def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
@@ -416,6 +439,103 @@ def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
         if line and not line.startswith("#"):
             patterns.append(line)
     return patterns
+
+
+def load_blocked_terms(repo: str | Path = ".") -> list[str]:
+    """Local/user word list. Never ships in the published package.
+
+    Repo file ``.push-guard-blocked-terms`` plus optional
+    ``~/.config/push-guard/blocked-terms``. One term per line. Used to catch
+    personal / house names in a *public* diff without putting those names in
+    Push Guard source.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    paths = [USER_BLOCKED_TERMS, Path(repo) / BLOCKED_TERMS_CONFIG]
+    for config in paths:
+        try:
+            text = Path(config).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key = line.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            terms.append(line)
+    return terms
+
+
+def _scan_line_for_blocked_terms(
+    line: str, path: str, line_number: int, terms: list[str]
+) -> list[SecretFinding]:
+    if not terms or IGNORE_MARKER.search(line):
+        return []
+    findings: list[SecretFinding] = []
+    folded = line.casefold()
+    for term in terms:
+        if len(term) < 3:
+            continue
+        needle = term.casefold()
+        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(needle) + r"(?![A-Za-z0-9_])", folded):
+            findings.append(
+                SecretFinding(
+                    rule_id="personal.blocked_term",
+                    path=path,
+                    line=line_number,
+                    reason="Personal or house term from local blocked-terms list",
+                    evidence="<redacted>",
+                )
+            )
+    return findings
+
+
+def _scan_tree_for_gitignored(repo: Path, local_sha: str) -> list[SecretFinding]:
+    """Block tracked files whose paths match the repo ignore rules.
+
+    Uses ``git check-ignore --no-index`` so a force-added personal file still
+    fails, even though a normal check-ignore skips tracked paths.
+    """
+    try:
+        tree = _run_git(repo, ["ls-tree", "-r", "--name-only", local_sha])
+    except PushGuardInspectionError:
+        return []
+    paths = [p.strip() for p in tree.splitlines() if p.strip()]
+    if not paths:
+        return []
+    try:
+        completed = subprocess.run(
+            _git_command(repo, ["check-ignore", "--no-index", "--stdin"], repo),
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            input="\n".join(paths) + "\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError:
+        return []
+    if completed.returncode not in (0, 1):
+        return []
+    findings: list[SecretFinding] = []
+    for path in completed.stdout.splitlines():
+        path = path.strip()
+        if not path:
+            continue
+        findings.append(
+            SecretFinding(
+                rule_id="private_path.gitignored",
+                path=path,
+                line=0,
+                reason="Path is gitignored but present in the pushed tree",
+                evidence="<redacted>",
+            )
+        )
+    return findings
 
 
 def path_matches_private(path: str, patterns: list[str]) -> str | None:
@@ -484,13 +604,15 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
         if local_sha == ZERO_SHA:
             continue
         diffs = _diffs_for_push_ref(repo_path, local_sha, remote_sha)
+        blocked_terms = load_blocked_terms(repo_path)
         for diff_text in diffs:
-            findings.extend(_scan_diff(diff_text))
+            findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
         if local_sha not in seen_path_shas:
             seen_path_shas.add(local_sha)
             findings.extend(
                 _scan_tree_for_private_paths(repo_path, local_sha, private_patterns)
             )
+            findings.extend(_scan_tree_for_gitignored(repo_path, local_sha))
     return findings
 
 
@@ -504,8 +626,9 @@ def scan_git_range(
     base_sha = _resolve_commit(repo_path, base_ref)
     head_sha = _resolve_commit(repo_path, head_ref)
     findings: list[SecretFinding] = []
+    blocked_terms = load_blocked_terms(repo_path)
     for diff_text in _diffs_for_push_ref(repo_path, head_sha, base_sha):
-        findings.extend(_scan_diff(diff_text))
+        findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
     findings.extend(
         _scan_tree_for_private_paths(
             repo_path,
@@ -513,6 +636,7 @@ def scan_git_range(
             load_private_path_patterns(repo_path),
         )
     )
+    findings.extend(_scan_tree_for_gitignored(repo_path, head_sha))
     return findings
 
 
@@ -1431,11 +1555,14 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str
     ]
 
 
-def _scan_diff(diff_text: str) -> list[SecretFinding]:
+def _scan_diff(
+    diff_text: str, *, blocked_terms: list[str] | None = None
+) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
     current_path = "<diff>"
     new_line = 0
     in_hunk = False
+    terms = blocked_terms or []
     for line in diff_text.splitlines():
         if line.startswith("+++ b/"):
             current_path = line[6:]
@@ -1447,7 +1574,11 @@ def _scan_diff(diff_text: str) -> list[SecretFinding]:
         if not in_hunk:
             continue
         if line.startswith("+") and not line.startswith("+++"):
-            findings.extend(_scan_line(line[1:], current_path, max(new_line, 1)))
+            body = line[1:]
+            findings.extend(_scan_line(body, current_path, max(new_line, 1)))
+            findings.extend(
+                _scan_line_for_blocked_terms(body, current_path, max(new_line, 1), terms)
+            )
             new_line += 1
             continue
         if line.startswith("-") and not line.startswith("---"):
