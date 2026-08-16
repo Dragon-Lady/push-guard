@@ -13,11 +13,12 @@ from pathlib import Path
 
 ZERO_SHA = "0" * 40
 
-# Inline allowlist escape hatch. A line containing this marker is skipped by
-# every rule. Use it on lines that legitimately carry IOC-shaped strings: this
-# detector's own pattern definitions and test fixtures, or a deploy script
-# that really does ssh-then-exec. It is explicit and grep-auditable on purpose --
-# matching detect-secrets' `# pragma: allowlist secret` philosophy.
+# Inline allowlist escape hatch for non-secret workflow/IOC rules. Provider
+# token shapes and generic secret assignments are still scanned on marked
+# lines: a comment must not turn a real credential into an allowed value. Use
+# this marker only on legitimate detector definitions, safe test structure, or
+# a deploy line that really does ssh-then-exec. It stays explicit and
+# grep-auditable on purpose.
 IGNORE_MARKER = re.compile(r"push-guard:\s*ignore", re.IGNORECASE)
 
 PLACEHOLDER_WORDS = {
@@ -499,31 +500,36 @@ def _scan_tree_for_gitignored(repo: Path, local_sha: str) -> list[SecretFinding]
     Uses ``git check-ignore --no-index`` so a force-added personal file still
     fails, even though a normal check-ignore skips tracked paths.
     """
-    try:
-        tree = _run_git(repo, ["ls-tree", "-r", "--name-only", local_sha])
-    except PushGuardInspectionError:
-        return []
-    paths = [p.strip() for p in tree.splitlines() if p.strip()]
+    paths = _tree_paths(repo, local_sha)
     if not paths:
         return []
     try:
         completed = subprocess.run(
-            _git_command(repo, ["check-ignore", "--no-index", "--stdin"], repo),
+            _git_command(
+                repo,
+                ["check-ignore", "--no-index", "-z", "--stdin"],
+                repo,
+            ),
             check=False,
             text=True,
             encoding="utf-8",
             errors="replace",
-            input="\n".join(paths) + "\n",
+            input="\0".join(paths) + "\0",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-    except OSError:
-        return []
+    except OSError as exc:
+        raise PushGuardInspectionError(
+            f"git check-ignore could not run: {exc.__class__.__name__}"
+        ) from exc
     if completed.returncode not in (0, 1):
-        return []
+        stderr = _first_stderr_line(completed.stderr)
+        detail = f": {stderr}" if stderr else ""
+        raise PushGuardInspectionError(
+            f"git check-ignore failed with exit {completed.returncode}{detail}"
+        )
     findings: list[SecretFinding] = []
-    for path in completed.stdout.splitlines():
-        path = path.strip()
+    for path in completed.stdout.split("\0"):
         if not path:
             continue
         findings.append(
@@ -651,12 +657,8 @@ def _scan_tree_for_private_paths(
     """
     if not patterns:
         return []
-    tree = _run_git(repo, ["ls-tree", "-r", "--name-only", local_sha])
     findings: list[SecretFinding] = []
-    for path in tree.splitlines():
-        path = path.strip()
-        if not path:
-            continue
+    for path in _tree_paths(repo, local_sha):
         matched = path_matches_private(path, patterns)
         if matched:
             findings.append(
@@ -831,8 +833,17 @@ def install_pre_push_hook(
             "Run from the specific project repo or pass --repo C:\\path\\to\\repo. "
             "Use --allow-home-repo only if you intentionally want this broad hook."
         )
-    hook_dir = repo_path / ".git" / "hooks"
-    hook_path = hook_dir / "pre-push"
+    configured_hook_path = _run_git(
+        repo_path, ["rev-parse", "--git-path", "hooks/pre-push"]
+    ).strip()
+    if not configured_hook_path:
+        raise PushGuardInspectionError(
+            "git rev-parse --git-path hooks/pre-push returned no path"
+        )
+    hook_path = Path(configured_hook_path)
+    if not hook_path.is_absolute():
+        hook_path = repo_path / hook_path
+    hook_dir = hook_path.parent
     hook_dir.mkdir(parents=True, exist_ok=True)
 
     hook_body = _hook_body()
@@ -881,10 +892,7 @@ def _print_help() -> None:
 
 def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
-
-    # Explicit per-line opt-out. Skip the whole line for every rule.
-    if IGNORE_MARKER.search(line):
-        return findings
+    skip_workflow_rules = bool(IGNORE_MARKER.search(line))
 
     for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
         for match in pattern.finditer(line):
@@ -925,6 +933,11 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
                     evidence="<redacted>",
                 )
             )
+
+    # The explicit marker only suppresses non-secret workflow/IOC rules. It
+    # cannot allow a provider token shape or generic secret assignment.
+    if skip_workflow_rules:
+        return findings
 
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
@@ -1031,11 +1044,19 @@ def _scan_line_for_hades_pypi(
 ) -> list[SecretFinding]:
     normalized_path = path.replace("\\", "/")
     lowered_path = normalized_path.lower()
-    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+    is_agent_instruction = _is_agent_instruction_path(normalized_path)
+    if (
+        lowered_path.endswith((".md", ".mdx", ".txt", ".rst"))
+        and not is_agent_instruction
+    ):
         return []
 
     is_pth = lowered_path.endswith(".pth")
-    is_code_or_workflow = is_pth or _is_workflow_or_script_path(normalized_path)
+    is_code_or_workflow = (
+        is_pth
+        or is_agent_instruction
+        or _is_workflow_or_script_path(normalized_path)
+    )
     if not is_code_or_workflow:
         return []
 
@@ -1479,6 +1500,19 @@ def _is_workflow_or_script_path(path: str) -> bool:
     return lowered.endswith((".sh", ".bash", ".zsh", ".js", ".cjs", ".mjs", ".ps1", ".py", ".yml", ".yaml"))
 
 
+def _is_agent_instruction_path(path: str) -> bool:
+    """Known repo-local instruction paths that agents may load as commands."""
+    normalized = path.replace("\\", "/").lower().lstrip("/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename in {".cursorrules", ".windsurfrules"}:
+        return True
+    if normalized == ".github/copilot-instructions.md":
+        return True
+    return normalized.startswith(".cursor/rules/")
+
+
 def _looks_like_placeholder(value: str) -> bool:
     """Substring check, used only for low-confidence/structural markers."""
     lowered = value.lower()
@@ -1514,12 +1548,29 @@ def _value_is_placeholder(value: str) -> bool:
 
 def _parse_pre_push(stdin_text: str) -> list[tuple[str, str, str, str]]:
     refs: list[tuple[str, str, str, str]] = []
-    for line in stdin_text.splitlines():
+    for line_number, line in enumerate(stdin_text.splitlines(), start=1):
+        if not line.strip():
+            continue
         parts = line.split()
         if len(parts) != 4:
-            continue
-        refs.append((parts[0], parts[1], parts[2], parts[3]))
+            raise PushGuardInspectionError(
+                f"Malformed pre-push input at line {line_number}"
+            )
+        local_ref, local_sha, remote_ref, remote_sha = parts
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", local_sha) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}", remote_sha
+        ):
+            raise PushGuardInspectionError(
+                f"Invalid object ID in pre-push input at line {line_number}"
+            )
+        refs.append((local_ref, local_sha.lower(), remote_ref, remote_sha.lower()))
     return refs
+
+
+def _tree_paths(repo: Path, treeish: str) -> list[str]:
+    """Return exact Git tree paths without newline/quoting ambiguity."""
+    output = _run_git(repo, ["ls-tree", "-r", "-z", "--name-only", treeish])
+    return [path for path in output.split("\0") if path]
 
 
 def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str]:

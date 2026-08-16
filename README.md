@@ -27,7 +27,8 @@ included `netlify.toml` (no build command; publish directory `docs`).
   user data are saved by Push Guard.
 - Findings store only rule IDs, file paths, line numbers, reasons, and the
   literal placeholder `<redacted>`.
-- Uses the `git` subprocess only to read commit diffs.
+- Uses the `git` subprocess only to read commit diffs, pushed trees, configured
+  hook paths, and ignore metadata.
 - No mutation through Git and no other subprocess execution.
 - No claim that a repository is clean.
 
@@ -70,6 +71,10 @@ matched values.
   `/api/service`, `0001.dat`, and Node execution paths
 - model-scanner refusal/null-result bait in executable package diffs, following
   JFrog's Shai-Hulud prompt-injection-vs-scanner writeup
+- the same refusal-bait signals in repo-local agent instruction paths reported
+  as promptware targets: `.cursorrules`, `.windsurfrules`, `.cursor/rules/`, and
+  `.github/copilot-instructions.md`; ordinary Markdown incident notes remain
+  excluded
 - Microsoft Copilot / AI-assistant `q=` links in executable/web/config diffs
   that combine private-context requests with external exfiltration terms
 - npm v12 readiness regressions in pushed npm metadata, including old npm pins,
@@ -124,6 +129,10 @@ One term per line. Added diff lines are scanned; matches are reported as
 `<redacted>`. Those names stay off PyPI and off git. Use
 `# push-guard: ignore` on a line that must keep a term.
 
+The marker can suppress local blocked-term and workflow/IOC findings, but it
+does **not** suppress provider token shapes or generic secret assignments. A
+comment must not turn a credential into an allowed value.
+
 ```
 # .push-guard-blocked-terms  (gitignored)
 house-given-name
@@ -159,7 +168,8 @@ you intentionally want one broad hook at the home-repo level.
 
 If a `pre-push` hook already exists, Push Guard refuses to overwrite it. Preserve
 and chain existing hooks intentionally, or rerun with `--force` only when you are
-refreshing a Push Guard-managed hook.
+refreshing a Push Guard-managed hook. Installation honors Git's configured
+`core.hooksPath` as well as the default `.git/hooks` directory.
 
 Manual hook body, for teams that prefer to wire hooks themselves:
 
@@ -202,7 +212,23 @@ python -m push_guard --repo /path/to/repo
   behavior.
 - It blocks likely matches; it does not rotate exposed credentials.
 - If a real secret was committed, rotate from a clean context after removing it.
+- A local Git hook can be bypassed with `git push --no-verify`; use server-side
+  push protection and protected release controls when enforcement is required.
 - It should be treated as a seatbelt, not a guarantee.
+
+## Security design sources
+
+- [Git pre-push hook input](https://git-scm.com/docs/githooks#_pre_push) defines
+  the exact local/remote ref and object IDs Push Guard validates and scans.
+- [Git revision ranges](https://git-scm.com/docs/git-rev-list) define the
+  reachable-minus-remote commit set used for outgoing coverage.
+- [JFrog's prompt-injection scanner research](https://research.jfrog.com/post/prompt-injection-vs-scanners/)
+  supports treating refusal as a failed scan and retaining deterministic
+  non-model checks.
+- [GitHub Actions secure use](https://docs.github.com/en/actions/reference/security/secure-use)
+  recommends immutable full-length action SHAs.
+- [PyPI's Trusted Publishing security model](https://docs.pypi.org/trusted-publishers/security-model/)
+  recommends a separate, minimal publish job with a protected environment.
 
 ## License
 
