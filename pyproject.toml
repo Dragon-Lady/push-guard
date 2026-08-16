@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "push-guard"
-version = "0.3.3"
+version = "0.3.4"
 description = "Local pre-push guard for likely secret leaks and private file paths."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,7 @@ classifiers = [
 Homepage = "https://github.com/Dragon-Lady/push-guard"
 Repository = "https://github.com/Dragon-Lady/push-guard"
 Issues = "https://github.com/Dragon-Lady/push-guard/issues"
+Changelog = "https://github.com/Dragon-Lady/push-guard/blob/main/CHANGELOG.md"
 
 [project.scripts]
 push-guard = "push_guard.guard:main"
