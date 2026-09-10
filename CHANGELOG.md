@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.5 - 2026-09-10
+
+### Security
+
+- Block all ten GitHub-reviewed Trinitite / Mini Shai-Hulud malicious releases
+  of `@7nohe/openapi-react-query-codegen` in npm dependency metadata.
+- Flag Trinitite payload markers and unsafe comment-triggered npm publish
+  conditions in executable or workflow changes.
+- Flag Aurora Linux/ESXi ransomware hash, R2 download, and VM force-kill
+  command shapes in executable or configuration changes.
+- Flag public September 2026 Linux kernel exploit-pack sources in executable or
+  configuration changes while keeping ordinary incident documentation
+  non-blocking.
+
+### Privacy
+
+- Preserve Push Guard's local-only, zero-telemetry posture. Findings remain
+  redacted and no user data, file contents, or matched values are retained.
+
 ## 0.3.4 - 2026-08-16
 
 ### Security

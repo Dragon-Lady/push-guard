@@ -245,6 +245,16 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
         "August 2026 keyv/cacheable (ChainDrop) compromised npm package version appears in dependency metadata",
     ),
     (
+        "workflow.trinitite_compromised_npm_version",
+        re.compile(
+            r"[\"']@7nohe/openapi-react-query-codegen(?:@|[\"']\s*:\s*[\"'])"  # push-guard: ignore
+            r"(?:0\.5\.[45]|1\.6\.[34]|2\.2\.[12]|3\.0\.[34]|"
+            r"0\.0\.0-(?:365d4eb738d3146583431948d3ba6e27a32556be|ec7876d6c917dad516ba69bbfafc948b834bf0ab))[\"']",  # push-guard: ignore
+            re.I,
+        ),
+        "Trinitite / Mini Shai-Hulud compromised npm package version appears in dependency metadata",
+    ),
+    (
         "workflow.manifest_reverse_shell_lifecycle",
         re.compile(
             r"[\"'](?:preinstall|install|postinstall|prepare)[\"']\s*:\s*[\"'][^\"']*"
@@ -254,6 +264,38 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
         "Package manifest lifecycle script contains a reverse-shell execution shape",
     ),
 ]
+
+SEPTEMBER_2026_THREAT_PATTERNS = [
+    (
+        "workflow.aurora_linux_ransomware_hash",
+        re.compile(r"a4af136d159a8eb96b54924fa80355ca52874913301300f55af7d67ae97edcfe", re.I),  # push-guard: ignore
+        "Aurora Linux/ESXi ransomware SHA-256",
+    ),
+    (
+        "workflow.aurora_ransomware_download",
+        re.compile(r"pub-c057b7d0b24944a29e381ce9ea22a2f1\.r2(?:\[\.\]|\.)dev/xu4gid0t8er3\.out", re.I),  # push-guard: ignore
+        "Aurora ransomware Cloudflare R2 payload URL",
+    ),
+    (
+        "workflow.aurora_esxi_vm_kill",
+        re.compile(r"\besxcli\s+vm\s+process\s+kill\s+--type=force\s+--world-id", re.I),  # push-guard: ignore
+        "Aurora-reported ESXi force-kill command shape",
+    ),
+    (
+        "workflow.public_linux_kernel_lpe_poc",
+        re.compile(r"NebuSec/CyberMeowfia(?:/[^\s\"']*)?/Linux-CVE-2026-(?:80714|74597|74581|74480|72255|72137|68376|68162|64560|63834|52933|52929|52924|52923|52912|43502|43501|43074|43042|31678|31659|23274)", re.I),  # push-guard: ignore
+        "Public September 2026 Linux kernel exploit-pack source in executable or configuration content",
+    ),
+    (
+        "workflow.trinitite_payload_marker",
+        re.compile(r"Trinitite:\s*Sponsored by Preview 2 Effects|\b3FWCvzduYZg\.js\b|\bdoubletrinnys-", re.I),  # push-guard: ignore
+        "Trinitite / Mini Shai-Hulud payload or exfiltration marker",
+    ),
+]
+
+TRINITITE_COMMENT_PUBLISH_TRIGGER = re.compile(
+    r"github\.event\.comment\.body\s*==\s*[\"']npm publish[\"']", re.I  # push-guard: ignore
+)
 
 ATOMIC_ARCH_AUR_PATTERNS = [
     (
@@ -944,6 +986,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_agentjacking(line, path, line_number))
     findings.extend(_scan_line_for_copilot_reprompt(line, path, line_number))
     findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
+    findings.extend(_scan_line_for_september_2026_threats(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
     findings.extend(_scan_line_for_dprk_socketio_loader(line, path, line_number))
@@ -1180,6 +1223,50 @@ def _scan_line_for_known_compromised_npm(
                     evidence="<redacted>",
                 )
             )
+
+    return findings
+
+
+def _scan_line_for_september_2026_threats(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    normalized_path = path.replace("\\", "/")
+    lowered_path = normalized_path.lower()
+    if lowered_path.endswith((".md", ".mdx", ".txt", ".rst")):
+        return []
+
+    is_reviewable = _is_workflow_or_script_path(normalized_path) or lowered_path.endswith(
+        (".json", ".jsonc", ".toml", ".ini", ".conf", ".env", ".lock")
+    )
+    if not is_reviewable:
+        return []
+
+    findings: list[SecretFinding] = []
+    for rule_id, pattern, reason in SEPTEMBER_2026_THREAT_PATTERNS:
+        if pattern.search(line):
+            findings.append(
+                SecretFinding(
+                    rule_id=rule_id,
+                    path=path,
+                    line=line_number,
+                    reason=reason,
+                    evidence="<redacted>",
+                )
+            )
+
+    if (
+        ".github/workflows/" in lowered_path
+        and TRINITITE_COMMENT_PUBLISH_TRIGGER.search(line)
+    ):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.trinitite_comment_publish_trigger",
+                path=path,
+                line=line_number,
+                reason="Comment-triggered npm publish workflow needs a trusted-author gate",
+                evidence="<redacted>",
+            )
+        )
 
     return findings
 

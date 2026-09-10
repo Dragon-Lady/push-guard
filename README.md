@@ -65,6 +65,16 @@ matched values.
   only (`keyv@6.0.0` and ten related jaredwray-family releases verified by Snyk,
   StepSecurity, Aikido, Wiz, and JFrog). Does not block all versions of those
   package names; full campaign inventory is larger (Ox / Wiz)
+- all ten GitHub-reviewed Trinitite / Mini Shai-Hulud malicious releases of
+  `@7nohe/openapi-react-query-codegen`, campaign payload markers, and
+  comment-triggered npm publish conditions that require a trusted-author gate
+- Aurora Linux/ESXi ransomware SHA-256, R2 payload URL, and ESXi VM force-kill
+  command shapes in executable or configuration diffs; Cursor installation or
+  ordinary use is not treated as an indicator
+- NebuSec/CyberMeowfia public exploit-pack sources for the 22 CVEs enumerated
+  in the September 2026 oss-security Linux LPE post when they appear in
+  executable or configuration diffs; ordinary incident documentation remains
+  excluded
 - AtomicArch/IronWorm-style AUR `PKGBUILD`, `.SRCINFO`, or `.install` metadata
   that references `atomic-lockfile` or invokes npm/npx loaders for it
 - DPRK/Famous Chollima-style npm loader behavior using Socket.IO,
@@ -229,6 +239,14 @@ python -m push_guard --repo /path/to/repo
   recommends immutable full-length action SHAs.
 - [PyPI's Trusted Publishing security model](https://docs.pypi.org/trusted-publishers/security-model/)
   recommends a separate, minimal publish job with a protected environment.
+- [GitHub's reviewed Trinitite malware advisory](https://github.com/advisories/GHSA-rg27-qr39-ch6w)
+  provides the affected `@7nohe/openapi-react-query-codegen` versions.
+- [JFrog's Trinitite analysis](https://research.jfrog.com/post/shai-hulud-trinitite/)
+  documents the payload markers and comment-triggered publishing path.
+- [Gambit Security's Aurora report](https://gambit.security/blog-posts/aurora-ransomware-targets-esxi-abuses-cursor-agent-for-exploitation)
+  provides the Linux/ESXi ransomware hash and behaviors.
+- [Openwall's oss-security post](https://www.openwall.com/lists/oss-security/2026/09/08/1)
+  enumerates the September 2026 public Linux kernel exploit batch.
 
 ## License
 
