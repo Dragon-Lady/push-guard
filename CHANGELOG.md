@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Build
+
+- Refresh the PyPA build frontend pinned in the release workflow to 1.6.1,
+  incorporating upstream dependency-floor and build fixes.
+
 ## 0.3.6 - 2026-09-29
 
 ### Security
