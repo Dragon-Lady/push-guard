@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.6 - 2026-09-29
+
+### Security
+
+- Block the nine SafeDep-reported DirtyBlanket npm package names in dependency
+  metadata. These fake Express/React packages run a Linux worm at install time.
+- Flag release-tag references to the two hijacked `actions-cool` GitHub Actions
+  in workflow changes. The tags were still malicious when the actions were
+  briefly re-enabled in September; full clean commit pins stay unflagged.
+- Block standard GitLab incoming email tokens in pushed text, including
+  project email addresses, with redacted findings. GitLab's secret-detection
+  pattern uses the `glimt-` prefix and a 25-character body; custom-prefix and
+  older formats require separate review.
+- Block the four Aikido-reported Graphalgo package identities when they appear
+  as Go module requirements or Terraform provider declarations. Keep the
+  similarly named legitimate Docker provider clear.
+
 ## 0.3.5 - 2026-09-10
 
 ### Security
