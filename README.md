@@ -44,6 +44,12 @@ matched values.
 
 - GitHub classic token prefixes: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`
 - GitHub fine-grained token prefix: `github_pat_`
+- GitLab incoming email tokens with the standard `glimt-` prefix and 25-character
+  token body. A project email address containing one can enable issue and merge
+  request actions as its owner; custom-prefix and older formats are not covered.
+- Aikido-reported Graphalgo Go modules and Terraform providers in `go.mod`,
+  `go.sum`, `.tf`, and `.terraform.lock.hcl` dependency or provider declarations.
+  The legitimate `kreuzwerker/docker` provider is not blocked.
 - OpenAI-style `sk-...` tokens
 - AWS access key IDs: `AKIA...` / `ASIA...`
 - private key block markers
@@ -57,7 +63,10 @@ matched values.
 - Agentjacking-style Sentry MCP wiring and fake Sentry resolution text that
   tries to make coding agents run `npx` diagnostics
 - known compromised npm package names in dependency metadata, including
-  `atomic-lockfile` and `ecto-flag-read`
+  `atomic-lockfile`, `ecto-flag-read`, and the nine DirtyBlanket fake
+  Express/React packages reported on September 29
+- GitHub workflow references to release tags of the hijacked
+  `actions-cool/issues-helper` and `actions-cool/maintain-one-comment` actions
 - July 2026 malicious npm names and exact compromised `jscrambler`, Injective,
   and payment-SDK versions, plus reverse-shell shapes embedded directly in
   package manifest lifecycle scripts
@@ -228,6 +237,17 @@ python -m push_guard --repo /path/to/repo
 
 ## Security design sources
 
+- [SafeDep's DirtyBlanket analysis](https://safedep.io/dirtyblanket-express-impersonation-npm/)
+  names the nine fake npm packages and Linux worm persistence paths.
+- [Socket's actions-cool report](https://socket.dev/blog/mini-shai-hulud-actions)
+  and [SafeDep's downstream infection analysis](https://safedep.io/mini-shai-hulud-reinfection-github-repositories/)
+  document the hijacked tags and September 2026 exposure window.
+- [GitLab token documentation](https://docs.gitlab.com/security/tokens/) and
+  [GitLab's detection pattern](https://gitlab-org.gitlab.io/gitlab/coverage-frontend/lcov-report/app/assets/javascripts/lib/utils/secret_detection_patterns.js.html)
+  define the incoming email token format; [Aikido's report](https://www.aikido.dev/blog/gitlab-email-push-to-main)
+  explains why a leaked project address matters.
+- [Aikido's Graphalgo analysis](https://www.aikido.dev/blog/graphalgo-terraform-go-modules)
+  names the two Go modules and two Terraform providers.
 - [Git pre-push hook input](https://git-scm.com/docs/githooks#_pre_push) defines
   the exact local/remote ref and object IDs Push Guard validates and scans.
 - [Git revision ranges](https://git-scm.com/docs/git-rev-list) define the

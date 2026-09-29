@@ -27,6 +27,65 @@ from push_guard.guard import (
 
 
 class PushGuardTests(unittest.TestCase):
+    def test_dirtyblanket_dependency_names_are_exact_and_metadata_scoped(self):
+        for name in ("xeprews", "express-javascript", "react-nodejs", "exptredd"):
+            with self.subTest(name=name):
+                rules = {f.rule_id for f in scan_text_for_secrets(f'"{name}": "5.2.1"', path="package.json")}
+                self.assertIn("workflow.dirtyblanket_npm_package", rules)
+        for value, path in (
+            ('"express": "5.2.1"', "package.json"),
+            ('"express-javascript-extra": "5.2.1"', "package.json"),
+            ('"xeprews": "5.2.1"', "README.md"),
+        ):
+            rules = {f.rule_id for f in scan_text_for_secrets(value, path=path)}
+            self.assertNotIn("workflow.dirtyblanket_npm_package", rules)
+
+    def test_hijacked_actions_cool_tags_are_workflow_scoped(self):
+        for name in ("issues-helper", "maintain-one-comment"):
+            line = f"- uses: actions-cool/{name}@v2.2.1"
+            rules = {f.rule_id for f in scan_text_for_secrets(line, path=".github/workflows/issues.yml")}
+            self.assertIn("workflow.mini_shai_hulud_hijacked_action_tag", rules)
+            safe = {f.rule_id for f in scan_text_for_secrets(line, path="docs/workflows.md")}
+            self.assertNotIn("workflow.mini_shai_hulud_hijacked_action_tag", safe)
+        pinned = "- uses: actions-cool/issues-helper@200c78641dbf33838311e5a1e0c31bbdb92d7cf0"
+        rules = {f.rule_id for f in scan_text_for_secrets(pinned, path=".github/workflows/issues.yml")}
+        self.assertNotIn("workflow.mini_shai_hulud_hijacked_action_tag", rules)
+
+    def test_detects_gitlab_incoming_email_token_without_returning_it(self):
+        token = "glimt-" + "A" * 25
+        address = f"incoming+project-123-{token}-issue@incoming.gitlab.com"
+        findings = scan_text_for_secrets(address, path="CONTRIBUTING.md")
+
+        self.assertEqual(1, len(findings))
+        self.assertEqual("secret.gitlab_incoming_email_token", findings[0].rule_id)
+        self.assertNotIn(token, findings[0].evidence)
+
+    def test_gitlab_incoming_email_token_short_placeholder_is_not_blocked(self):
+        findings = scan_text_for_secrets("glimt-example", path="README.md")
+        self.assertEqual([], findings)
+
+    def test_graphalgo_go_and_terraform_dependencies_are_scoped_to_manifests(self):
+        cases = [
+            ("require gocommunity.io/orderedbtree v0.1.0", "go.mod", "workflow.graphalgo_go_module"),
+            ("gogets.dev/btreex v0.1.0 h1:example", "go.sum", "workflow.graphalgo_go_module"),
+            ('source = "kreuzwenker/docker"', "main.tf", "workflow.graphalgo_terraform_provider"),
+            ('provider "registry.terraform.io/gocommunity-io/dockerd" {', ".terraform.lock.hcl", "workflow.graphalgo_terraform_provider"),
+        ]
+        for line, path, expected in cases:
+            with self.subTest(path=path, line=line):
+                rules = {finding.rule_id for finding in scan_text_for_secrets(line, path=path)}
+                self.assertIn(expected, rules)
+
+        safe = [
+            ('source = "kreuzwerker/docker"', "main.tf"),
+            ("gogets.dev/btreex is under review", "README.md"),
+            ("// gogets.dev/btreex v0.1.0", "go.mod"),
+        ]
+        for line, path in safe:
+            with self.subTest(path=path, line=line):
+                rules = {finding.rule_id for finding in scan_text_for_secrets(line, path=path)}
+                self.assertFalse(any(rule.startswith("workflow.graphalgo_") for rule in rules))
+
     def test_detects_github_tokens_without_returning_secret_value(self):
         secret = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
         findings = scan_text_for_secrets(f"token={secret}", path="example.env")

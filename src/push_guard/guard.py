@@ -39,6 +39,12 @@ PLACEHOLDER_WORDS = {
 # markers honor the placeholder filter.
 SECRET_PATTERNS = [
     (
+        "secret.gitlab_incoming_email_token",
+        re.compile(r"(?<![A-Za-z0-9_])glimt-[A-Za-z0-9_-]{25}(?![A-Za-z0-9_])"),
+        "GitLab incoming email token pattern",
+        True,
+    ),
+    (
         "secret.github_fine_grained_token",
         re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
         "GitHub fine-grained token pattern",
@@ -197,6 +203,15 @@ COPILOT_REPROMPT_PATTERNS = [
 ]
 
 KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
+    (
+        "workflow.dirtyblanket_npm_package",
+        re.compile(
+            r"(?<![\w@/-])(?:xeprews|express-javascript|express-nodejs|react-nodejs|"
+            r"exprdd|exprrdd|exptrdd|exptred|exptredd)(?![\w/-])",
+            re.I,
+        ),
+        "SafeDep-reported DirtyBlanket npm package appears in dependency metadata",
+    ),
     (
         "workflow.compromised_npm_package",
         re.compile(r"(?<![\w@/-])(?:atomic-lockfile|ecto-flag-read)(?![\w/-])", re.I),
@@ -986,6 +1001,7 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_agentjacking(line, path, line_number))
     findings.extend(_scan_line_for_copilot_reprompt(line, path, line_number))
     findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
+    findings.extend(_scan_line_for_graphalgo_dependencies(line, path, line_number))
     findings.extend(_scan_line_for_september_2026_threats(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
@@ -1053,6 +1069,24 @@ def _scan_line_for_workflow_compromise(
         return []
 
     findings: list[SecretFinding] = []
+    if (
+        ".github/workflows/" in normalized_path.lower()
+        and re.search(
+            r"\buses\s*:\s*[\"']?actions-cool/(?:issues-helper|maintain-one-comment)@v[0-9][\w.-]*\b",
+            line,
+            re.I,
+        )
+    ):
+        findings.append(
+            SecretFinding(
+                rule_id="workflow.mini_shai_hulud_hijacked_action_tag",
+                path=path,
+                line=line_number,
+                reason="Workflow uses a reported hijacked actions-cool release tag",
+                evidence="<redacted>",
+            )
+        )
+
     for rule_id, pattern, reason in SHAI_HULUD_SSH_PATTERNS:
         if pattern.search(line):
             findings.append(
@@ -1225,6 +1259,33 @@ def _scan_line_for_known_compromised_npm(
             )
 
     return findings
+
+
+def _scan_line_for_graphalgo_dependencies(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    """Match only the four reported Go/Terraform package identities in manifests."""
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    stripped = line.lstrip()
+    if stripped.startswith(("#", "//")):
+        return []
+
+    if name in {"go.mod", "go.sum"} and re.search(
+        r"^\s*(?:require\s+)?(?:gocommunity\.io/orderedbtree|gogets\.dev/btreex)\s+v[0-9]",
+        line,
+    ):
+        rule_id = "workflow.graphalgo_go_module"
+        reason = "Aikido-reported Graphalgo Go module appears in dependency metadata"
+    elif (name.endswith(".tf") or name == ".terraform.lock.hcl") and re.search(
+        r'^\s*(?:source\s*=\s*|provider\s+)["\'](?:registry\.terraform\.io/)?(?:gocommunity-io/dockerd|kreuzwenker/docker)["\']',
+        line,
+    ):
+        rule_id = "workflow.graphalgo_terraform_provider"
+        reason = "Aikido-reported Graphalgo Terraform provider appears in configuration"
+    else:
+        return []
+
+    return [SecretFinding(rule_id, path, line_number, reason, "<redacted>")]
 
 
 def _scan_line_for_september_2026_threats(
