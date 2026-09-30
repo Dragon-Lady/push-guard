@@ -1,11 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.3.7 - 2026-09-30
 
 ### Build
 
 - Refresh the PyPA build frontend pinned in the release workflow to 1.6.1,
   incorporating upstream dependency-floor and build fixes.
+
+### Security
+
+- Flag exact affected lodash-family pins for the `_.template` imports-key
+  advisory in `package.json`; a version match is an exposure lead.
+- Flag exact affected MCP Python SDK pins in requirements and PyProject
+  metadata for the OAuth credential-routing advisory. Unattended providers
+  also need `issuer=` after upgrading.
+- Flag 15 exact npm package names from OX Security's PhantomSub report in
+  dependency metadata, without treating nearby lookalike names as matches.
 
 ## 0.3.6 - 2026-09-29
 

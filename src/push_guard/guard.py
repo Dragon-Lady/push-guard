@@ -1001,6 +1001,8 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_agentjacking(line, path, line_number))
     findings.extend(_scan_line_for_copilot_reprompt(line, path, line_number))
     findings.extend(_scan_line_for_known_compromised_npm(line, path, line_number))
+    findings.extend(_scan_line_for_phantomsub_npm(line, path, line_number))
+    findings.extend(_scan_line_for_advisory_dependencies(line, path, line_number))
     findings.extend(_scan_line_for_graphalgo_dependencies(line, path, line_number))
     findings.extend(_scan_line_for_september_2026_threats(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
@@ -1257,6 +1259,89 @@ def _scan_line_for_known_compromised_npm(
                     evidence="<redacted>",
                 )
             )
+
+    return findings
+
+
+PHANTOMSUB_OX_NPM_NAMES = (
+    "ourin-baileys", "@nexustechpro/baileys", "@badzz88/baileys",
+    "@ostyado/baileys", "levvleys", "@vanzxy/baileys",
+    "@yudzxml/baileys", "@chatunity/baileys", "@kelvdra/baileys",
+    "neuralwhatsapp", "lilys-baileys", "@fyxzpediaa/baileys",
+    "noxleyss", "@xrelly-stack/bails", "alipclutch-baileys",
+)
+
+
+def _scan_line_for_phantomsub_npm(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    if not _is_dependency_metadata_path(path):
+        return []
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    for package_name in PHANTOMSUB_OX_NPM_NAMES:
+        escaped = re.escape(package_name)
+        if re.search(rf'["\']{escaped}["\']\s*:', line, re.I) or re.search(
+            rf'(?<![\w@.-]){escaped}@(?:npm:)?\d', line, re.I
+        ) or (name == "package.json" and re.search(
+            rf'["\']name["\']\s*:\s*["\']{escaped}["\']', line, re.I
+        )):
+            return [SecretFinding(
+                "workflow.phantomsub_ox_npm_package", path, line_number,
+                "OX-reported PhantomSub npm package appears in dependency metadata; review WhatsApp account use",
+                "<redacted>",
+            )]
+    return []
+
+
+def _scan_line_for_advisory_dependencies(
+    line: str, path: str, line_number: int
+) -> list[SecretFinding]:
+    """Review exact vulnerable pins added to dependency manifests."""
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if line.lstrip().startswith(("#", "//")):
+        return []
+
+    findings: list[SecretFinding] = []
+    if name == "package.json":
+        for match in re.finditer(
+            r'["\'](lodash(?:-amd|-es|\.template)?)["\']\s*:\s*["\'](\d+\.\d+\.\d+)["\']',
+            line,
+            re.I,
+        ):
+            package_name, version = match.group(1).lower(), match.group(2)
+            upper = "4.18.0" if package_name == "lodash.template" else "4.17.23"
+            affected = _compare_dotted_version(version, "4.0.0") >= 0 and (
+                _compare_dotted_version(version, upper) < (0 if package_name == "lodash.template" else 1)
+            )
+            if affected:
+                findings.append(SecretFinding(
+                    "workflow.lodash_template_cve_2026_4800_pin", path, line_number,
+                    "Exact lodash pin is affected by GHSA-r5fr-rjxr-66jc; review _.template imports usage and upgrade to 4.18.0",
+                    "<redacted>",
+                ))
+
+    if name in {"requirements.txt", "pyproject.toml"}:
+        for match in re.finditer(
+            r'(?<![\w.-])mcp\s*==\s*(\d+\.\d+\.\d+(?:a\d+)?)(?=[\s"\'\],;#]|$)',
+            line,
+            re.I,
+        ):
+            version = match.group(1)
+            base = re.sub(r"a\d+$", "", version)
+            prerelease = base != version
+            affected = (
+                (_compare_dotted_version(base, "1.9.1") > 0 or (base == "1.9.1" and not prerelease))
+                and (_compare_dotted_version(base, "1.30.0") < 0 or (base == "1.30.0" and prerelease))
+            ) or (
+                (_compare_dotted_version(base, "2.0.0") > 0 or (base == "2.0.0" and version != "2.0.0a0"))
+                and (_compare_dotted_version(base, "2.2.0") < 0 or (base == "2.2.0" and prerelease))
+            )
+            if affected:
+                findings.append(SecretFinding(
+                    "workflow.mcp_oauth_credential_routing_pin", path, line_number,
+                    "Exact mcp pin is affected by GHSA-qx49-fqc8-xw99; upgrade and bind issuer for unattended OAuth providers",
+                    "<redacted>",
+                ))
 
     return findings
 
