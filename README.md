@@ -42,6 +42,15 @@ matched values.
 
 ## Current Signals
 
+- Exact affected lodash-family pins in `package.json` for the
+  `_.template` imports-key advisory (GHSA-r5fr-rjxr-66jc). A pin alone does
+  not prove an unsafe template call.
+- Exact affected `mcp` Python SDK pins in requirements and PyProject
+  metadata for GHSA-qx49-fqc8-xw99. HTTP OAuth clients need a fixed SDK;
+  unattended providers also need `issuer=` and stored registrations may need
+  clearing.
+- Fifteen exact OX Security PhantomSub npm package names in dependency
+  metadata. A reference is a review lead, not proof of account activity.
 - GitHub classic token prefixes: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`
 - GitHub fine-grained token prefix: `github_pat_`
 - GitLab incoming email tokens with the standard `glimt-` prefix and 25-character

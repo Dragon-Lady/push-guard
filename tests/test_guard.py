@@ -27,6 +27,48 @@ from push_guard.guard import (
 
 
 class PushGuardTests(unittest.TestCase):
+    def test_phantomsub_exact_names_in_npm_metadata(self):
+        for content, path in (
+            ('"@nexustechpro/baileys": "1.2.3"', "package.json"),
+            ('"name": "ourin-baileys"', "package.json"),
+            ('  /levvleys@1.0.0:', "pnpm-lock.yaml"),
+        ):
+            with self.subTest(content=content):
+                self.assertIn("workflow.phantomsub_ox_npm_package", {f.rule_id for f in scan_text_for_secrets(content, path=path)})
+        for content, path in (
+            ('"ourin-baileys-extra": "1.2.3"', "package.json"),
+            ('"notes": "ourin-baileys was reported"', "package.json"),
+            ('"ourin-baileys": "1.2.3"', "README.md"),
+        ):
+            with self.subTest(content=content):
+                self.assertNotIn("workflow.phantomsub_ox_npm_package", {f.rule_id for f in scan_text_for_secrets(content, path=path)})
+
+    def test_exact_advisory_pins_block_only_affected_manifest_entries(self):
+        cases = (
+            ('"lodash": "4.17.23"', "package.json", "workflow.lodash_template_cve_2026_4800_pin"),
+            ('"lodash.template": "4.17.21"', "package.json", "workflow.lodash_template_cve_2026_4800_pin"),
+            ('mcp==1.29.1', "requirements.txt", "workflow.mcp_oauth_credential_routing_pin"),
+            ('dependencies = ["mcp==2.0.0a1"]', "pyproject.toml", "workflow.mcp_oauth_credential_routing_pin"),
+        )
+        for content, path, rule_id in cases:
+            with self.subTest(content=content):
+                self.assertIn(rule_id, {f.rule_id for f in scan_text_for_secrets(content, path=path)})
+
+        safe_cases = (
+            ('"lodash": "^4.17.23"', "package.json"),
+            ('"lodash-es": "4.18.0"', "package.json"),
+            ('"other-lodash": "4.17.23"', "package.json"),
+            ('"lodash": "4.17.23"', "README.md"),
+            ('mcp>=1.29.1', "requirements.txt"),
+            ('mcp==1.30.0', "requirements.txt"),
+            ('mcp-extra==1.29.1', "requirements.txt"),
+        )
+        for content, path in safe_cases:
+            with self.subTest(content=content):
+                rules = {f.rule_id for f in scan_text_for_secrets(content, path=path)}
+                self.assertNotIn("workflow.lodash_template_cve_2026_4800_pin", rules)
+                self.assertNotIn("workflow.mcp_oauth_credential_routing_pin", rules)
+
     def test_dirtyblanket_dependency_names_are_exact_and_metadata_scoped(self):
         for name in ("xeprews", "express-javascript", "react-nodejs", "exptredd"):
             with self.subTest(name=name):
