@@ -21,6 +21,54 @@
   <title>Push Guard | Stop likely secret leaks before push</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Does Push Guard upload my repository?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. It runs locally, uses Git only to read commit data, and makes no network calls."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Will a finding print my secret into the terminal?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. The matched value is replaced with <redacted>. The output identifies the rule, file, line, and reason so you can inspect locally."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does it overwrite my existing pre-push hook?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Not by default. Installation refuses an unmanaged existing hook so you can preserve and chain it intentionally."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I add private project paths without publishing their names?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Put local patterns in the git-ignored .push-guard-private-paths file at the repository root."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does a clean result prove my repository is safe?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. It is one local publication gate, not a complete secret-management or supply-chain security program."
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
