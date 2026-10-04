@@ -1,0 +1,2 @@
+User-agent: *
+Sitemap: https://push-guard.netlify.app/sitemap.xml
