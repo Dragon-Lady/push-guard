@@ -16,6 +16,11 @@ dependencies, external scripts, analytics, or remote assets. It can be served
 with GitHub Pages from the `docs/` directory or deployed to Netlify using the
 included `netlify.toml` (no build command; publish directory `docs`).
 
+The current Netlify project uses manual deploys. A Git push alone does not
+update the public page: publish the contents of `docs/` after each release and
+check the live version, social image, and response headers. The `docs/_headers`
+file keeps the security headers when deploying that directory directly.
+
 ## Posture
 
 - Local only.
