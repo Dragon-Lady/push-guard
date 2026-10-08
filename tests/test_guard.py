@@ -1103,6 +1103,7 @@ class PushGuardTests(unittest.TestCase):
         with (
             patch("push_guard.guard._resolve_git_root", return_value=Path("/repo")),
             patch("push_guard.guard._diffs_for_push_ref", return_value=[finding_diff]),
+            patch("push_guard.guard._scan_commit_messages", return_value=[]),
             patch("push_guard.guard._scan_history_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_gitignored", return_value=[]),
@@ -1163,6 +1164,7 @@ class PushGuardTests(unittest.TestCase):
                 side_effect=["1" * 40, "2" * 40],
             ),
             patch("push_guard.guard._diffs_for_push_ref", return_value=[finding_diff]),
+            patch("push_guard.guard._scan_commit_messages", return_value=[]),
             patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_gitignored", return_value=[]),
             patch("push_guard.guard.load_private_path_patterns", return_value=[]),
@@ -1447,6 +1449,20 @@ class PushGuardTests(unittest.TestCase):
             ["given-name"],
         )
         self.assertEqual([], findings)
+
+    def test_blocked_term_matches_underscore_and_diff_path(self):
+        self.assertEqual(1, len(_scan_line_for_blocked_terms(
+            "GIVEN-NAME_HOME", "settings", 1, ["given-name"]
+        )))
+        diff = "\n".join([
+            "diff --git a/given-name_setup.md b/given-name_setup.md",
+            "--- /dev/null",
+            "+++ b/given-name_setup.md",
+            "@@ -0,0 +1 @@",
+            "+neutral content",
+        ])
+        findings = _scan_diff(diff, blocked_terms=["given-name"])
+        self.assertEqual("<redacted path>", findings[0].path)
 
     def test_load_blocked_terms_reads_repo_file(self):
         with TemporaryDirectory() as tmpdir:

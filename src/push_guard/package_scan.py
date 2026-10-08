@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import os
 import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -43,6 +44,9 @@ def scan_distribution(
         raise PushGuardInspectionError(
             "private blocked terms are required for this release scan"
         )
+    secret_lines = [line.strip() for line in os.environ.get("PUSH_GUARD_BLOCKED_TERMS", "").splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if require_explicit_terms and len(secret_lines) == 1 and any(mark in secret_lines[0] for mark in (",", ";")):
+        raise PushGuardInspectionError("private blocked terms must be one per line")
     terms = load_blocked_terms(repo)
     private_paths = load_private_path_patterns(repo)
     archive_path = Path(archive)
@@ -72,7 +76,7 @@ def scan_distribution(
             ))
         if path_matches_private(name, private_paths):
             findings.append(SecretFinding(
-                "private_path.match", safe_name, 0,
+                "private_path.match", "<redacted member>", 0,
                 "Private/internal path in distribution", "<redacted>",
             ))
         return safe_name

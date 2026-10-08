@@ -362,9 +362,15 @@ private list:
 - repo: `.push-guard-blocked-terms`
 - user: `~/.config/push-guard/blocked-terms`
 
-One term or phrase per line. Added diff lines are scanned; matches are reported
+One term or phrase per line. Added diff lines, paths, and commit and tag messages
+are scanned; matches are reported
 as `<redacted>`. The terms never enter Git or the published package. Use
 `# push-guard: ignore` on a line that must keep a term.
+Set `PUSH_GUARD_INFER_IDENTITY=0` or pass `--no-infer` to omit inferred local
+identifiers while retaining your explicit private list. For a new branch or tag,
+the installed hook checks commits absent from tracking refs for that same Git
+remote. If it cannot identify trusted refs for the destination, it checks the
+full history.
 
 The marker can suppress local blocked-term and workflow/IOC findings, but it
 does **not** suppress provider token shapes or generic secret assignments. A
@@ -378,17 +384,22 @@ seat-nickname
 
 For an automated release, store the same list as a masked CI secret and pass it
 through the `PUSH_GUARD_BLOCKED_TERMS` environment variable. A release gate can
-require that explicit list, so an unset secret stops publication:
+require that explicit list, so an unset or short list stops publication. Use one
+term per line, with no comma or semicolon separator. The check prints only the
+number of loaded terms:
 
 ```sh
 python -m build
-push-guard scan-package --repo . --require-explicit-terms dist/*.whl dist/*.tar.gz
+push-guard scan-package --repo . --require-explicit-terms --min-terms 3 dist/*
 ```
 
 `scan-package` reads the built wheel and source archive without extracting
 them. It checks member paths and text content, including files such as review
 notes that may be included only in the source archive. Binary content is not
-decoded; malformed and oversized archives stop the release. A clean Git push
+decoded, including UTF-16 and text with a NUL near the start; nested archives
+are not opened. The `# push-guard: ignore` marker can suppress a private-term
+finding on a shipped text line, so review any intentional exceptions. Malformed
+and oversized archives stop the release. A clean Git push
 does not prove that a built package is clean, so run this check **before** the
 PyPI upload. Keep the private CI value out of command arguments and logs.
 Packages with intentional secret-shaped test fixtures can use `--privacy-only`

@@ -8,6 +8,14 @@
 - Always block Push Guard's own private configuration files if they are tracked.
 - Add `scan-package` to inspect built wheel and source archives before upload;
   release jobs can require an explicit private list and fail closed.
+- For new branches and tags, exclude only commits already tracked for the same
+  destination remote; still inspect full history when it has no trusted refs.
+- Exclude common generic account and host names from identity inference and add
+  `--no-infer` / `PUSH_GUARD_INFER_IDENTITY=0` for an explicit opt-out.
+- Reject malformed single-line CI lists, support a minimum explicit-term count,
+  and print only the count so release operators can confirm secret formatting.
+- Check private terms in paths, commit messages and annotated tags, and redact
+  matching paths and private distribution members from diagnostics.
 
 ## 0.4.0 - 2026-10-08
 

@@ -490,10 +490,11 @@ USER_BLOCKED_TERMS = Path.home() / ".config" / "push-guard" / "blocked-terms"
 BLOCKED_TERMS_ENV = "PUSH_GUARD_BLOCKED_TERMS"
 GENERIC_ACCOUNT_NAMES = {
     "root", "runner", "ubuntu", "user", "guest", "admin", "administrator",
-    "nobody", "default", "localhost", "pop-os",
+    "nobody", "default", "localhost", "pop-os", "git", "dev",
+    "test", "node", "code", "vagrant", "ec2-user",
+    "desktop", "server", "workstation", "debian", "fedora",
+    "penguin", "raspberrypi", "macbook-pro",
 }
-
-
 def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
     """Generic defaults plus any patterns from the local, git-ignored config."""
     patterns = list(PRIVATE_PATH_DEFAULTS)
@@ -513,9 +514,14 @@ def _identity_terms(username: str, display_name: str, hostname: str) -> list[str
     """Infer a few local identifiers without committing or printing them."""
     terms: list[str] = []
     login = username.strip()
-    if re.fullmatch(r"[\w.-]{3,}", login) and login.casefold() not in GENERIC_ACCOUNT_NAMES:
-        terms.append(login)
     display = display_name.split(",", 1)[0].strip()
+    if (
+        re.fullmatch(r"[\w.-]{4,}", login)
+        and login.casefold() not in GENERIC_ACCOUNT_NAMES
+        and not login.casefold().startswith("codespace")
+        and (len(login) >= 8 or display.casefold().startswith(login.casefold()))
+    ):
+        terms.append(login)
     if (
         display and len(display) >= 3
         and login.casefold() not in GENERIC_ACCOUNT_NAMES
@@ -529,9 +535,9 @@ def _identity_terms(username: str, display_name: str, hostname: str) -> list[str
             terms.append(first)
     host = hostname.split(".", 1)[0].strip()
     if (
-        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{3,}", host)
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{7,}", host)
         and host.casefold() not in GENERIC_ACCOUNT_NAMES
-        and not host.casefold().startswith(("desktop-", "ip-"))
+        and not host.casefold().startswith("codespace")
     ):
         terms.append(host)
     return terms
@@ -586,7 +592,9 @@ def load_blocked_terms(repo: str | Path = ".") -> list[str]:
     Only the private lists cover other people, addresses, and phone numbers.
     Values are read locally and findings never print the matching term.
     """
-    terms = load_explicit_blocked_terms(repo) + _local_identity_terms()
+    terms = load_explicit_blocked_terms(repo)
+    if os.environ.get("PUSH_GUARD_INFER_IDENTITY", "1") != "0":
+        terms += _local_identity_terms()
     seen: set[str] = set()
     result: list[str] = []
     for term in terms:
@@ -608,7 +616,7 @@ def _scan_line_for_blocked_terms(
         if len(term) < 3:
             continue
         needle = term.casefold()
-        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(needle) + r"(?![A-Za-z0-9_])", folded):
+        if re.search(r"(?<![A-Za-z0-9])" + re.escape(needle) + r"(?![A-Za-z0-9])", folded):
             findings.append(
                 SecretFinding(
                     rule_id="personal.blocked_term",
@@ -619,6 +627,14 @@ def _scan_line_for_blocked_terms(
                 )
             )
     return findings
+
+
+def _safe_private_metadata(value: str, terms: list[str]) -> str:
+    folded = value.casefold()
+    for term in terms:
+        if re.search(r"(?<![A-Za-z0-9])" + re.escape(term.casefold()) + r"(?![A-Za-z0-9])", folded):
+            return "<redacted>"
+    return _display_metadata(value)
 
 
 def _scan_tree_for_gitignored(repo: Path, local_sha: str) -> list[SecretFinding]:
@@ -761,7 +777,7 @@ def scan_text_for_secrets(text: str, path: str = "<text>") -> list[SecretFinding
     return findings
 
 
-def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
+def scan_git_push(repo: str | Path, stdin_text: str, remote_name: str | None = None) -> list[SecretFinding]:
     repo_path = _resolve_git_root(Path(repo))
     private_patterns = load_private_path_patterns(repo_path)
     findings: list[SecretFinding] = []
@@ -789,14 +805,19 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
             if object_type == "tag":
                 tag_text = _run_git(repo_path, ["cat-file", "-p", local_sha])
                 findings.extend(scan_text_for_secrets(tag_text, path="<tag>"))
+                for line_number, line in enumerate(tag_text.splitlines(), start=1):
+                    findings.extend(_scan_line_for_blocked_terms(
+                        line, "<tag>", line_number, load_blocked_terms(repo_path)
+                    ))
             if remote_sha == ZERO_SHA:
                 commit_sha = _resolve_commit(repo_path, local_sha)
                 scan_base = companion_bases.get(commit_sha, ZERO_SHA)
-        diffs = _diffs_for_push_ref(repo_path, local_sha, scan_base)
+        diffs = _diffs_for_push_ref(repo_path, local_sha, scan_base, remote_name)
         blocked_terms = load_blocked_terms(repo_path)
         for diff_text in diffs:
             findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
-        findings.extend(_scan_history_private_paths(repo_path, local_sha, scan_base, private_patterns))
+        findings.extend(_scan_commit_messages(repo_path, local_sha, scan_base, blocked_terms, remote_name))
+        findings.extend(_scan_history_private_paths(repo_path, local_sha, scan_base, private_patterns, remote_name))
         if local_sha not in seen_path_shas:
             seen_path_shas.add(local_sha)
             findings.extend(
@@ -819,6 +840,7 @@ def scan_git_range(
     blocked_terms = load_blocked_terms(repo_path)
     for diff_text in _diffs_for_push_ref(repo_path, head_sha, base_sha):
         findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
+    findings.extend(_scan_commit_messages(repo_path, head_sha, base_sha, blocked_terms))
     private_patterns = load_private_path_patterns(repo_path)
     findings.extend(_scan_history_private_paths(repo_path, head_sha, base_sha, private_patterns))
     findings.extend(
@@ -833,14 +855,14 @@ def scan_git_range(
 
 
 def _scan_history_private_paths(
-    repo: Path, local_sha: str, remote_sha: str, patterns: list[str]
+    repo: Path, local_sha: str, remote_sha: str, patterns: list[str], remote_name: str | None = None
 ) -> list[SecretFinding]:
     """Private material remains published when an outgoing later commit deletes it."""
     if not patterns:
         return []
     findings: list[SecretFinding] = []
     seen: set[str] = set()
-    for commit in _outgoing_commits(repo, local_sha, remote_sha):
+    for commit in _outgoing_commits(repo, local_sha, remote_sha, remote_name):
         # Inspect added/changed paths, not whole historical trees. Unchanged
         # private paths confined to the trusted base do not expand this range.
         output = _run_git(repo, [
@@ -918,11 +940,15 @@ def _pre_push_main(argv: list[str]) -> int:
         default=".",
         help="Repository path. Defaults to current directory.",
     )
+    parser.add_argument("--no-infer", action="store_true", help="Do not infer the local login, display name, or host.")
+    parser.add_argument("--remote-name", help="Git destination remote name supplied by the pre-push hook.")
     args = parser.parse_args(argv)
+    if args.no_infer:
+        os.environ["PUSH_GUARD_INFER_IDENTITY"] = "0"
 
     stdin_text = sys.stdin.read()
     try:
-        findings = scan_git_push(args.repo, stdin_text)
+        findings = scan_git_push(args.repo, stdin_text, args.remote_name)
     except RuntimeError as exc:
         print("Push Guard could not inspect this push.", file=sys.stderr)
         print(_display_metadata(str(exc)), file=sys.stderr)
@@ -943,11 +969,12 @@ def _pre_push_main(argv: list[str]) -> int:
 
     print("Push Guard blocked this push.", file=sys.stderr)
     print(f"{kind} Secret values are redacted.", file=sys.stderr)
+    display_terms = load_blocked_terms(args.repo)
     for finding in findings:
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
-            f"({_display_metadata(finding.reason)}; {finding.evidence})",
+            f"- {finding.rule_id} at {_safe_private_metadata(finding.path, display_terms)}{line_suffix} "
+            f"({_safe_private_metadata(finding.reason, display_terms)}; {finding.evidence})",
             file=sys.stderr,
         )
     print(
@@ -978,7 +1005,10 @@ def _scan_main(argv: list[str]) -> int:
         default="HEAD",
         help="Candidate head ref. Defaults to HEAD.",
     )
+    parser.add_argument("--no-infer", action="store_true", help="Do not infer the local login, display name, or host.")
     args = parser.parse_args(argv)
+    if args.no_infer:
+        os.environ["PUSH_GUARD_INFER_IDENTITY"] = "0"
 
     try:
         findings = scan_git_range(args.repo, args.base, args.head)
@@ -993,11 +1023,12 @@ def _scan_main(argv: list[str]) -> int:
         return 0
 
     print("Push Guard blocked this range. Secret values are redacted.", file=sys.stderr)
+    display_terms = load_blocked_terms(args.repo)
     for finding in findings:
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
-            f"({_display_metadata(finding.reason)}; {finding.evidence})",
+            f"- {finding.rule_id} at {_safe_private_metadata(finding.path, display_terms)}{line_suffix} "
+            f"({_safe_private_metadata(finding.reason, display_terms)}; {finding.evidence})",
             file=sys.stderr,
         )
     print("Review the reported paths locally before publication.", file=sys.stderr)
@@ -1017,12 +1048,23 @@ def _scan_package_main(argv: list[str]) -> int:
         "--require-explicit-terms", action="store_true",
         help="Fail if no private blocked terms are configured (for CI releases).",
     )
+    parser.add_argument("--min-terms", type=int, default=1, help="Minimum number of distinct explicit private terms required.")
+    parser.add_argument("--no-infer", action="store_true", help="Do not infer the local login, display name, or host.")
     parser.add_argument(
         "--privacy-only", action="store_true",
         help="Check private terms and paths without other secret/workflow rules.",
     )
     args = parser.parse_args(argv)
+    if args.min_terms < 1:
+        parser.error("--min-terms must be at least 1")
+    if args.no_infer:
+        os.environ["PUSH_GUARD_INFER_IDENTITY"] = "0"
     try:
+        explicit_count = len(load_explicit_blocked_terms(args.repo))
+        if args.require_explicit_terms:
+            print(f"Push Guard loaded {explicit_count} explicit private term(s).")
+        if args.require_explicit_terms and explicit_count < args.min_terms:
+            raise PushGuardInspectionError("too few explicit private terms for this release scan")
         findings = [
             finding
             for archive in args.archives
@@ -1041,11 +1083,12 @@ def _scan_package_main(argv: list[str]) -> int:
         print(f"Push Guard found no blocking findings in {len(args.archives)} distribution(s).")
         return 0
     print("Push Guard blocked this distribution. Values are redacted.", file=sys.stderr)
+    display_terms = load_blocked_terms(args.repo)
     for finding in dict.fromkeys(findings):
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
-            f"({_display_metadata(finding.reason)}; {finding.evidence})",
+            f"- {finding.rule_id} at {_safe_private_metadata(finding.path, display_terms)}{line_suffix} "
+            f"({_safe_private_metadata(finding.reason, display_terms)}; {finding.evidence})",
             file=sys.stderr,
         )
     return 1
@@ -1143,7 +1186,7 @@ def _hook_body() -> str:
     return (
         "#!/bin/sh\n"
         "# Installed by Push Guard. Local only; no network calls.\n"
-        f'exec "{python}" -m push_guard --repo "$(git rev-parse --show-toplevel)"\n'
+        f'exec "{python}" -m push_guard --repo "$(git rev-parse --show-toplevel)" --remote-name "$1"\n'
     )
 
 
@@ -2022,17 +2065,19 @@ def _tree_paths(repo: Path, treeish: str) -> list[str]:
     return [path for path in output.split("\0") if path]
 
 
-def _outgoing_commits(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
+def _outgoing_commits(repo: Path, local_sha: str, remote_sha: str, remote_name: str | None = None) -> list[str]:
     if remote_sha == ZERO_SHA:
-        # The remote has no trusted base for this ref. Other remote-tracking
-        # refs may belong to private repositories and cannot justify excluding
-        # objects from a first push to a different destination.
-        commits = _run_git(
-            repo,
-            ["rev-list", "--reverse", local_sha],
-        ).splitlines()
-        if not commits:
-            commits = [local_sha]
+        # Trust only tracking refs for this exact destination. A different
+        # remote (possibly private) must never reduce first-push coverage.
+        remote_refs: list[str] = []
+        if remote_name and remote_name in _run_git(repo, ["remote"]).splitlines():
+            remote_refs = _run_git(
+                repo, ["for-each-ref", "--format=%(refname)", f"refs/remotes/{remote_name}/"]
+            ).splitlines()
+        args = ["rev-list", "--reverse", local_sha]
+        if remote_refs:
+            args += ["--not", *remote_refs]
+        commits = _run_git(repo, args).splitlines()
     else:
         # Scan every commit object introduced by the update. An endpoint diff
         # misses a secret added in one commit and removed again before HEAD.
@@ -2044,7 +2089,17 @@ def _outgoing_commits(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
     return commits
 
 
-def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
+def _scan_commit_messages(repo: Path, local_sha: str, remote_sha: str, terms: list[str], remote_name: str | None = None) -> list[SecretFinding]:
+    findings: list[SecretFinding] = []
+    for commit in _outgoing_commits(repo, local_sha, remote_sha, remote_name):
+        message = _run_git(repo, ["show", "-s", "--format=%B", commit])
+        findings.extend(scan_text_for_secrets(message, path="<commit message>"))
+        for line_number, line in enumerate(message.splitlines(), start=1):
+            findings.extend(_scan_line_for_blocked_terms(line, "<commit message>", line_number, terms))
+    return findings
+
+
+def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str, remote_name: str | None = None) -> list[str]:
     return [
         _run_git(
             repo,
@@ -2063,7 +2118,7 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str
                 commit,
             ],
         )
-        for commit in _outgoing_commits(repo, local_sha, remote_sha)
+        for commit in _outgoing_commits(repo, local_sha, remote_sha, remote_name)
     ]
 
 
@@ -2082,6 +2137,10 @@ def _scan_diff(
             continue
         if not in_hunk and line.startswith("+++ "):
             current_path = _decode_diff_path(line[4:])
+            path_hits = _scan_line_for_blocked_terms(current_path, "<redacted path>", 0, terms)
+            findings.extend(path_hits)
+            if path_hits:
+                current_path = "<redacted path>"
             continue
         if line.startswith("@@"):
             new_line = _parse_hunk_new_line(line)
