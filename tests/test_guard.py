@@ -1382,6 +1382,8 @@ class PushGuardTests(unittest.TestCase):
         self.assertIsNotNone(path_matches_private("config/.env", PRIVATE_PATH_DEFAULTS))
         self.assertIsNotNone(path_matches_private("secrets/vault.kdbx", PRIVATE_PATH_DEFAULTS))
         self.assertIsNotNone(path_matches_private("family_keys.json", PRIVATE_PATH_DEFAULTS))
+        self.assertIsNotNone(path_matches_private(".push-guard-blocked-terms", PRIVATE_PATH_DEFAULTS))
+        self.assertIsNotNone(path_matches_private("config/.push-guard-private-paths", PRIVATE_PATH_DEFAULTS))
         self.assertIsNone(path_matches_private("src/app.py", PRIVATE_PATH_DEFAULTS))
 
     def test_safe_env_templates_are_allowed_but_real_env_still_blocked(self):

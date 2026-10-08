@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 - release pending
+
+- Infer local account and machine identifiers as redacted personal terms for
+  push checks, while retaining private lists for other names and details.
+- Accept a private terms list through `PUSH_GUARD_BLOCKED_TERMS` for CI.
+- Always block Push Guard's own private configuration files if they are tracked.
+- Add `scan-package` to inspect built wheel and source archives before upload;
+  release jobs can require an explicit private list and fail closed.
+
 ## 0.4.0 - 2026-10-08
 
 - Bound discovery and scanning by one 45-second inspection deadline; preserve

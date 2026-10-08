@@ -351,15 +351,19 @@ exact basename or path segment.
 A file that is **gitignored** but still present in the pushed tree (force-add)
 is also blocked (`private_path.gitignored`).
 
-## Personal / house terms (local list)
+## Personal / house terms
 
-Token shapes miss a name in a README. Keep a **git-ignored** list of terms:
+Push Guard now infers the current login name, account display name, and a
+non-generic machine name for pre-push checks. This is a best-effort local safety
+net: it cannot infer another person's name, your address, phone number, private
+nicknames, or every spelling of your own name. Keep those in a **git-ignored**
+private list:
 
 - repo: `.push-guard-blocked-terms`
 - user: `~/.config/push-guard/blocked-terms`
 
-One term per line. Added diff lines are scanned; matches are reported as
-`<redacted>`. Those names stay off PyPI and off git. Use
+One term or phrase per line. Added diff lines are scanned; matches are reported
+as `<redacted>`. The terms never enter Git or the published package. Use
 `# push-guard: ignore` on a line that must keep a term.
 
 The marker can suppress local blocked-term and workflow/IOC findings, but it
@@ -371,6 +375,24 @@ comment must not turn a credential into an allowed value.
 house-given-name
 seat-nickname
 ```
+
+For an automated release, store the same list as a masked CI secret and pass it
+through the `PUSH_GUARD_BLOCKED_TERMS` environment variable. A release gate can
+require that explicit list, so an unset secret stops publication:
+
+```sh
+python -m build
+push-guard scan-package --repo . --require-explicit-terms dist/*.whl dist/*.tar.gz
+```
+
+`scan-package` reads the built wheel and source archive without extracting
+them. It checks member paths and text content, including files such as review
+notes that may be included only in the source archive. Binary content is not
+decoded; malformed and oversized archives stop the release. A clean Git push
+does not prove that a built package is clean, so run this check **before** the
+PyPI upload. Keep the private CI value out of command arguments and logs.
+Packages with intentional secret-shaped test fixtures can use `--privacy-only`
+to check private terms and paths without the other secret/workflow rules.
 
 ## Install
 

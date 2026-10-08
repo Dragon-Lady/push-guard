@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import getpass
 import os
 import re
+import socket
 import subprocess
 import sys
 import unicodedata
@@ -470,6 +472,8 @@ PRIVATE_PATH_DEFAULTS = [
     "*_keys.json",
     "credentials.json",
     ".npmrc",
+    ".push-guard-private-paths",
+    ".push-guard-blocked-terms",
 ]
 
 # Conventionally-safe, meant-to-be-committed env templates. They contain only
@@ -483,6 +487,11 @@ SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template", ".env.dist
 PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
 BLOCKED_TERMS_CONFIG = ".push-guard-blocked-terms"
 USER_BLOCKED_TERMS = Path.home() / ".config" / "push-guard" / "blocked-terms"
+BLOCKED_TERMS_ENV = "PUSH_GUARD_BLOCKED_TERMS"
+GENERIC_ACCOUNT_NAMES = {
+    "root", "runner", "ubuntu", "user", "guest", "admin", "administrator",
+    "nobody", "default", "localhost", "pop-os",
+}
 
 
 def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
@@ -500,25 +509,68 @@ def load_private_path_patterns(repo: str | Path = ".") -> list[str]:
     return patterns
 
 
-def load_blocked_terms(repo: str | Path = ".") -> list[str]:
-    """Local/user word list. Never ships in the published package.
+def _identity_terms(username: str, display_name: str, hostname: str) -> list[str]:
+    """Infer a few local identifiers without committing or printing them."""
+    terms: list[str] = []
+    login = username.strip()
+    if re.fullmatch(r"[\w.-]{3,}", login) and login.casefold() not in GENERIC_ACCOUNT_NAMES:
+        terms.append(login)
+    display = display_name.split(",", 1)[0].strip()
+    if (
+        display and len(display) >= 3
+        and login.casefold() not in GENERIC_ACCOUNT_NAMES
+        and display.casefold() not in GENERIC_ACCOUNT_NAMES
+    ):
+        terms.append(display)
+        # A login such as "alex" or "alex42" also identifies the given name
+        # in "Alex Example". Do not infer unrelated short/common first names.
+        first = display.split()[0]
+        if len(first) >= 4 and login.casefold().startswith(first.casefold()):
+            terms.append(first)
+    host = hostname.split(".", 1)[0].strip()
+    if (
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{3,}", host)
+        and host.casefold() not in GENERIC_ACCOUNT_NAMES
+        and not host.casefold().startswith(("desktop-", "ip-"))
+    ):
+        terms.append(host)
+    return terms
 
-    Repo file ``.push-guard-blocked-terms`` plus optional
-    ``~/.config/push-guard/blocked-terms``. One term per line. Used to catch
-    personal / house names in a *public* diff without putting those names in
-    Push Guard source.
-    """
+
+def _local_identity_terms() -> list[str]:
+    username = ""
+    display = ""
+    try:
+        import pwd
+        account = pwd.getpwuid(os.getuid())
+        username, display = account.pw_name, account.pw_gecos
+    except (ImportError, AttributeError, KeyError, OSError):
+        try:
+            username = getpass.getuser()
+        except OSError:
+            pass
+    try:
+        hostname = socket.gethostname()
+    except OSError:
+        hostname = ""
+    return _identity_terms(username, display, hostname)
+
+
+def load_explicit_blocked_terms(repo: str | Path = ".") -> list[str]:
+    """Private words supplied through local files or an Actions secret."""
     terms: list[str] = []
     seen: set[str] = set()
+    sources: list[str] = [os.environ.get(BLOCKED_TERMS_ENV, "")]
     paths = [USER_BLOCKED_TERMS, Path(repo) / BLOCKED_TERMS_CONFIG]
     for config in paths:
         try:
-            text = Path(config).read_text(encoding="utf-8", errors="replace")
+            sources.append(Path(config).read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
+    for text in sources:
         for raw in text.splitlines():
             line = raw.strip()
-            if not line or line.startswith("#"):
+            if len(line) < 3 or line.startswith("#"):
                 continue
             key = line.casefold()
             if key in seen:
@@ -526,6 +578,23 @@ def load_blocked_terms(repo: str | Path = ".") -> list[str]:
             seen.add(key)
             terms.append(line)
     return terms
+
+
+def load_blocked_terms(repo: str | Path = ".") -> list[str]:
+    """Best-effort account identifiers plus private user/repo terms.
+
+    Only the private lists cover other people, addresses, and phone numbers.
+    Values are read locally and findings never print the matching term.
+    """
+    terms = load_explicit_blocked_terms(repo) + _local_identity_terms()
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in terms:
+        key = term.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(term)
+    return result
 
 
 def _scan_line_for_blocked_terms(
@@ -545,7 +614,7 @@ def _scan_line_for_blocked_terms(
                     rule_id="personal.blocked_term",
                     path=path,
                     line=line_number,
-                    reason="Personal or house term from local blocked-terms list",
+                    reason="Local identity or private blocked term",
                     evidence="<redacted>",
                 )
             )
@@ -828,6 +897,8 @@ def main(argv: list[str] | None = None) -> int:
         return _install_main(argv[1:])
     if argv and argv[0] == "scan":
         return _scan_main(argv[1:])
+    if argv and argv[0] == "scan-package":
+        return _scan_package_main(argv[1:])
     if argv and argv[0] in {"-h", "--help"}:
         _print_help()
         return 0
@@ -868,7 +939,7 @@ def _pre_push_main(argv: list[str]) -> int:
     elif has_private_path:
         kind = "Private/internal file path matched."
     else:
-        kind = "Likely secret material matched."
+        kind = "Secret or personal material matched."
 
     print("Push Guard blocked this push.", file=sys.stderr)
     print(f"{kind} Secret values are redacted.", file=sys.stderr)
@@ -930,6 +1001,53 @@ def _scan_main(argv: list[str]) -> int:
             file=sys.stderr,
         )
     print("Review the reported paths locally before publication.", file=sys.stderr)
+    return 1
+
+
+def _scan_package_main(argv: list[str]) -> int:
+    from .package_scan import scan_distribution
+
+    parser = _GuardArgumentParser(
+        prog="push-guard scan-package",
+        description="Inspect built wheels and source archives before publication.",
+    )
+    parser.add_argument("archives", nargs="+", help="Built .whl or .tar.gz files.")
+    parser.add_argument("--repo", default=".", help="Repository for private rules.")
+    parser.add_argument(
+        "--require-explicit-terms", action="store_true",
+        help="Fail if no private blocked terms are configured (for CI releases).",
+    )
+    parser.add_argument(
+        "--privacy-only", action="store_true",
+        help="Check private terms and paths without other secret/workflow rules.",
+    )
+    args = parser.parse_args(argv)
+    try:
+        findings = [
+            finding
+            for archive in args.archives
+            for finding in scan_distribution(
+                archive, args.repo,
+                require_explicit_terms=args.require_explicit_terms,
+                privacy_only=args.privacy_only,
+            )
+        ]
+    except RuntimeError as exc:
+        print("Push Guard could not inspect the distribution.", file=sys.stderr)
+        print(_display_metadata(str(exc)), file=sys.stderr)
+        print("Blocking publication because inspection failed.", file=sys.stderr)
+        return 1
+    if not findings:
+        print(f"Push Guard found no blocking findings in {len(args.archives)} distribution(s).")
+        return 0
+    print("Push Guard blocked this distribution. Values are redacted.", file=sys.stderr)
+    for finding in dict.fromkeys(findings):
+        line_suffix = f":{finding.line}" if finding.line else ""
+        print(
+            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
+            f"({_display_metadata(finding.reason)}; {finding.evidence})",
+            file=sys.stderr,
+        )
     return 1
 
 
@@ -1034,6 +1152,7 @@ def _print_help() -> None:
         "usage: push-guard [--repo REPO]\n"
         "       push-guard sweep [--help] [OPTIONS]\n"
         "       push-guard scan --base REF [--head REF] [--repo REPO]\n"
+        "       push-guard scan-package [--repo REPO] [--require-explicit-terms] DIST...\n"
         "       push-guard install [--repo REPO] [--force] [--allow-home-repo]\n\n"
         "Local secret guard. Scan a committed range, run from a Git pre-push\n"
         "hook, or install the hook with `push-guard install`."

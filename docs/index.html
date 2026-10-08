@@ -31,7 +31,7 @@
         "name": "Does Push Guard upload my repository?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "No. It runs locally, uses Git only to read commit data, and makes no network calls."
+          "text": "No. The pre-push check reads local Git data and the optional package check reads built archives. The scanner makes no network calls; you may also run it in your own CI."
         }
       },
       {
@@ -56,6 +56,14 @@
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "Yes. Put local patterns in the git-ignored .push-guard-private-paths file at the repository root."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does it catch every personal name or address automatically?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. It infers the current account and machine names, but other names, addresses, phone numbers, and alternate spellings need a private blocked-terms list. A package release can scan built archives with that list before upload."
         }
       },
       {
@@ -337,7 +345,7 @@
       <h2 id="faq-title">Clear answers before installation.</h2>
       <details>
         <summary>Does Push Guard upload my repository?</summary>
-        <p>No. It runs locally, uses Git only to read commit data, and makes no network calls.</p>
+        <p>No. The pre-push check reads local Git data and the optional package check reads built archives. The scanner makes no network calls; you may also run it in your own CI.</p>
       </details>
       <details>
         <summary>Will a finding print my secret into the terminal?</summary>
@@ -350,6 +358,10 @@
       <details>
         <summary>Can I add private project paths without publishing their names?</summary>
         <p>Yes. Put local patterns in the git-ignored <code>.push-guard-private-paths</code> file at the repository root.</p>
+      </details>
+      <details>
+        <summary>Does it catch every personal name or address automatically?</summary>
+        <p>No. It infers the current account and machine names, but other names, addresses, phone numbers, and alternate spellings need a private blocked-terms list. A package release can scan built archives with that list before upload.</p>
       </details>
       <details>
         <summary>Does a clean result prove my repository is safe?</summary>
