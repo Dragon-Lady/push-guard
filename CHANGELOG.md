@@ -14,6 +14,9 @@
 - Decode Git-quoted paths and distinguish added `++` content from patch headers.
 - Inspect complete reachable history for new remote refs instead of excluding
   commits merely because a different remote-tracking ref already contains them.
+- For a new release tag sent with its branch in one push, use that branch's
+  advertised remote SHA as the tag's scan base; keep the full-history check
+  for a tag sent alone, and inspect annotated tag text for secrets.
 - Check added/changed private paths throughout outgoing history, including files
   deleted before the tip, while keeping normal trusted-base scope and exceptions.
 - Redact recognized credentials in finding paths and diagnostic metadata, and

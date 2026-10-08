@@ -697,14 +697,37 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
     private_patterns = load_private_path_patterns(repo_path)
     findings: list[SecretFinding] = []
     seen_path_shas: set[str] = set()
-    for _local_ref, local_sha, _remote_ref, remote_sha in _parse_pre_push(stdin_text):
+    refs = _parse_pre_push(stdin_text)
+    # Git supplies these lines from one destination's advertised refs. If an
+    # annotated release tag and the branch it tags are pushed together, the
+    # branch's nonzero remote SHA is a trusted base for the tag as well. This
+    # keeps the hook offline and still scans every commit newly introduced by
+    # either ref. A lone new tag keeps the full-history first-push check.
+    companion_bases = {
+        local_sha: remote_sha
+        for local_ref, local_sha, remote_ref, remote_sha in refs
+        if local_ref.startswith("refs/heads/")
+        and remote_ref.startswith("refs/heads/")
+        and local_sha != ZERO_SHA
+        and remote_sha != ZERO_SHA
+    }
+    for local_ref, local_sha, _remote_ref, remote_sha in refs:
         if local_sha == ZERO_SHA:
             continue
-        diffs = _diffs_for_push_ref(repo_path, local_sha, remote_sha)
+        scan_base = remote_sha
+        if local_ref.startswith("refs/tags/"):
+            object_type = _run_git(repo_path, ["cat-file", "-t", local_sha]).strip()
+            if object_type == "tag":
+                tag_text = _run_git(repo_path, ["cat-file", "-p", local_sha])
+                findings.extend(scan_text_for_secrets(tag_text, path="<tag>"))
+            if remote_sha == ZERO_SHA:
+                commit_sha = _resolve_commit(repo_path, local_sha)
+                scan_base = companion_bases.get(commit_sha, ZERO_SHA)
+        diffs = _diffs_for_push_ref(repo_path, local_sha, scan_base)
         blocked_terms = load_blocked_terms(repo_path)
         for diff_text in diffs:
             findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
-        findings.extend(_scan_history_private_paths(repo_path, local_sha, remote_sha, private_patterns))
+        findings.extend(_scan_history_private_paths(repo_path, local_sha, scan_base, private_patterns))
         if local_sha not in seen_path_shas:
             seen_path_shas.add(local_sha)
             findings.extend(

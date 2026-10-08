@@ -100,6 +100,46 @@ class GitInspectionHardeningTests(unittest.TestCase):
         findings = scan_git_push(self.repo, f"refs/heads/main {head} refs/heads/main {'0' * 40}\n")
         self.assertIn("secret.github_token", {f.rule_id for f in findings})
 
+    def test_new_tag_uses_only_companion_branch_base_from_same_push(self):
+        self.commit("old-fixture.txt", self.token + "\n")
+        base = self.git("rev-parse", "HEAD")
+        head = self.commit("README.md", "safe release change\n")
+        self.git("tag", "-a", "v1", "-m", "safe release")
+        tag = self.git("rev-parse", "refs/tags/v1")
+        branch = f"refs/heads/main {head} refs/heads/main {base}\n"
+        tag_ref = f"refs/tags/v1 {tag} refs/tags/v1 {'0' * 40}\n"
+
+        self.assertEqual([], scan_git_push(self.repo, branch + tag_ref))
+        self.assertIn("secret.github_token", {
+            f.rule_id for f in scan_git_push(self.repo, tag_ref)
+        })
+
+        other_head = self.commit("other.txt", "another safe change\n")
+        mismatched_branch = (
+            f"refs/heads/main {other_head} refs/heads/main {base}\n"
+        )
+        self.assertIn("secret.github_token", {
+            f.rule_id for f in scan_git_push(self.repo, mismatched_branch + tag_ref)
+        })
+
+    def test_new_tag_still_scans_new_commit_and_tag_message(self):
+        head = self.commit("new-secret.txt", self.token + "\n")
+        self.git("tag", "-a", "v1", "-m", "safe release")
+        tag = self.git("rev-parse", "refs/tags/v1")
+        refs = (f"refs/heads/main {head} refs/heads/main {self.base}\n"
+                f"refs/tags/v1 {tag} refs/tags/v1 {'0' * 40}\n")
+        self.assertIn("secret.github_token", {
+            f.rule_id for f in scan_git_push(self.repo, refs)
+        })
+
+        self.git("tag", "-f", "-a", "v1", "-m", self.token)
+        tag = self.git("rev-parse", "refs/tags/v1")
+        self.assertIn("secret.github_token", {
+            f.rule_id for f in scan_git_push(
+                self.repo, f"refs/tags/v1 {tag} refs/tags/v1 {'0' * 40}\n"
+            )
+        })
+
     def test_filename_credential_is_redacted_in_api_and_cli(self):
         self.commit(self.token + ".txt", self.token + "\n")
         findings = scan_git_range(self.repo, self.base)
