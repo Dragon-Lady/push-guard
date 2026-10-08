@@ -798,6 +798,9 @@ def _scan_tree_for_private_paths(
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "sweep":
+        from .sweep import main as sweep_main
+        return sweep_main(argv[1:])
     if argv and argv[0] == "install":
         return _install_main(argv[1:])
     if argv and argv[0] == "scan":
@@ -1006,6 +1009,7 @@ def _hook_body() -> str:
 def _print_help() -> None:
     print(
         "usage: push-guard [--repo REPO]\n"
+        "       push-guard sweep [--help] [OPTIONS]\n"
         "       push-guard scan --base REF [--head REF] [--repo REPO]\n"
         "       push-guard install [--repo REPO] [--force] [--allow-home-repo]\n\n"
         "Local secret guard. Scan a committed range, run from a Git pre-push\n"

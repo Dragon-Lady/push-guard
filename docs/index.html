@@ -90,7 +90,7 @@
   <main id="main">
     <section class="hero" id="top" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source alpha · v0.3.7</p>
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source alpha · v0.4.0</p>
         <h1 id="hero-title">Stop the secret.<br><span>Keep the push.</span></h1>
         <p class="hero-subtitle">A local Git seatbelt for the moment before code leaves your machine.</p>
         <p class="hero-text">
@@ -289,6 +289,7 @@
           history. Start with the code. Verify the behavior. Keep the override for findings you have
           intentionally reviewed.
         </p>
+        <p>Version 0.4.0 also adds optional Sweep checks for likely secrets in selected HOME text files. Sweep skips mounted trees and database files, and never prints matched values.</p>
         <div class="proof-actions">
           <a class="button secondary" href="https://github.com/Dragon-Lady/push-guard/tree/main/tests" target="_blank" rel="noreferrer">Review the tests</a>
           <a class="button secondary" href="https://pypi.org/project/push-guard/" target="_blank" rel="noreferrer">View on PyPI</a>
@@ -297,13 +298,13 @@
       <div class="metric-grid" aria-label="Release evidence">
         <article>
           <span>Current release</span>
-          <strong>v0.3.7</strong>
+          <strong>v0.4.0</strong>
           <p>Tagged public package.</p>
         </article>
         <article>
           <span>Local test gate</span>
-          <strong>87 passed</strong>
-          <p>Plus 32 passing subtests on this checkout.</p>
+          <strong>255 passed</strong>
+          <p>Plus 56 passing subtests on this checkout.</p>
         </article>
         <article>
           <span>Secret values retained</span>

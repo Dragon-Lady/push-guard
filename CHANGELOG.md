@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-10-08
+
+- Bound discovery and scanning by one 45-second inspection deadline; preserve
+  partial reports on budget exhaustion and prune heavy package/cache trees.
+- Exclude filesystem and bind mounts using mountinfo, device and descriptor
+  mount IDs; report skipped mounts without listing their contents.
+- Keep release tests in a separate job from artifact building; make the existing
+  hook-reporting test independent of the current checkout.
 
 - Inspect raw Git content with text conversion, external diff helpers, and color
   disabled; do not allow binary attributes or custom prefixes to hide findings.
@@ -13,6 +20,16 @@
   escape terminal controls in user-visible metadata.
 - Recognize exact affected MCP pins with extras and PhantomSub package identities
   in npm v3 `node_modules` lockfile keys, including nested dependencies.
+
+- Add fixture-verified, opt-in `push-guard sweep` and `push-guard-sweep` disk
+  inspection as a separate command alongside the Git inspection hardening above.
+- Add HOME-bounded no-follow reads, metadata-only credential-store mode checks,
+  keyed fingerprints, private baseline/report output and opt-in aggregate alerts.
+- Reject identifiable binary/database/compressed scan targets after at most an
+  8 KiB header read, leaving state and config readers unchanged.
+- Install a development-only pytest extra in CI and run all existing and new
+  tests before a release can publish.
+- Keep the existing Python >=3.11 package floor.
 
 ## 0.3.7 - 2026-09-30
 

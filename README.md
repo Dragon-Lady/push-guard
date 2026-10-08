@@ -23,27 +23,225 @@ file keeps the security headers when deploying that directory directly.
 
 ## Posture
 
-- Local only.
-- No network calls.
-- No package installs.
-- No target file mutation.
-- No secret values printed.
-- No tokens, keys, secrets, credentials, file contents, repository contents, or
-  user data are saved by Push Guard.
-- Findings store only rule IDs, file paths, line numbers, reasons, and the
-  literal placeholder `<redacted>`.
-- Uses the `git` subprocess only to read commit diffs, pushed trees, configured
-  hook paths, and ignore metadata.
-- No mutation through Git and no other subprocess execution.
-- No claim that a repository is clean.
+- Local, read-only inspection of targets. No telemetry.
+- No network by default. Only Sweep's explicit `--send` option enables aggregate
+  alerts to configured destinations; the Git guard remains offline.
+- No package installs or target-file mutation during scans.
+- No matched secret values or source lines printed, logged, or saved.
+- Git mode uses the `git` subprocess only to read commit diffs, pushed trees,
+  configured hook paths, and ignore metadata. The existing hook entry point is
+  preserved, with raw-content and outgoing-history inspection hardened.
+- Sweep reads selected files outside Git, inside `$HOME`, and executes no child
+  processes, including Git.
+- No scan results written by default. Sweep creates one random 32-byte HMAC key
+  at `$XDG_STATE_HOME/push-guard-sweep/fp.key` (default
+  `~/.local/state/push-guard-sweep/fp.key`) for stable, non-guessable fingerprints.
+  This key is the explicit exception to “no data stored by default.” It contains
+  no scanned data. The state directory is 0700 and files are created 0600.
+- Explicit Sweep `--baseline` and `--output` files contain redacted local metadata;
+  `--send` stores keyed deduplication receipts, never alert credentials or secrets.
+- No claim that a repository or machine is clean. Matches are review leads,
+  not proof that credentials remain valid.
 
 Blocking a push is Git's response to the advisory. Push Guard remains read-only
 and does not mutate files. Override is available with `git push --no-verify`
 when the matched value is known not to be a secret.
 
-Push Guard does not send data to any service. It does not phone home, collect
-telemetry, upload reports, write scan results by default, or retain copies of
-matched values.
+## Sweep: secrets on disk
+
+The `push-guard sweep` command and `push-guard-sweep` alias provide the same local
+inspection. They require the existing package's Python 3.11 or newer and have no
+additional runtime dependencies. Development tests use the optional `test` extra
+(`python -m pip install ".[test]"`, then `PYTHONPATH=src python -m pytest -q`
+from the repository root). The 0.4.0 release adds Sweep. CI installs that
+development extra and runs the entire pytest suite, including the legacy
+unittest cases. Release tests run in a
+separate job; that job never supplies distribution artifacts to publishing. The
+artifact-build job does not install test dependencies. Sweep does not install
+or enable a scheduler.
+
+```sh
+push-guard sweep --list-targets
+push-guard sweep --roots ~/projects --class stray
+push-guard-sweep --format json --output ~/sweep-report.json
+push-guard-sweep --baseline ~/sweep-baseline.json
+push-guard-sweep report --format html --output ~/sweep-report.html
+push-guard-sweep print-timer --interval 7d
+```
+
+Every scan also considers the default history, dotfile, configuration and log
+locations below. `--roots` changes the `.env*` and custom-include search roots;
+use `--exclude` to narrow the other default sets. Repeated `--include GLOB` adds
+files within the existing bounded searches, and repeated `--exclude GLOB` removes
+paths. Globs match basenames, HOME-relative paths, or absolute paths. Excludes
+win; includes cannot override safety exclusions or depth limits. `~` in CLI path
+arguments is expanded. Scanned paths must remain inside `$HOME`.
+
+- History: Bash, Zsh, Python, Node, PostgreSQL, MySQL, SQLite shell history and
+  `.lesshst`. The SQLite **shell history text** is separate from database files.
+- Dotfiles: `.bashrc`, `.zshrc`, `.profile`, `.bash_profile`, `.npmrc`, and
+  `.docker/config.json`; selected JSON, TOML, YAML, INI and CONF files under
+  `.config` with at most four directory levels below it.
+- `.env*` files: under the selected roots (default HOME), at most six directory
+  levels. Dependency trees, virtual environments, Git metadata and caches are
+  excluded from this search.
+- Logs: `.log` files and files within `logs/`, at most four directory levels under
+  `.local/state`, `.cache`, `.codex`, `.config/Cursor/logs` and configured
+  `log_dirs`.
+
+Known credential stores (`.git-credentials`, `.aws/credentials`, `.netrc`,
+`.pypirc`, `.config/gh/hosts.yml`, `.config/rclone/rclone.conf`, `.codex/auth.json`)
+are **metadata-only** checks. Their contents are never opened. Each is reported
+as `expected-store`, with info severity for private modes or warn severity for
+execute/group/other permissions. `line` is null and `fp_kind=path` explicitly
+identifies a keyed path fingerprint, not a token fingerprint. Reach Ward owns
+credential inventory in these stores. This avoids inventing a secret value or
+line number for a mode check. All other matches are classed `stray` and normally
+warn; Google access tokens are low severity and marked short-lived, likely
+expired. No token is checked against a provider.
+
+Sweep reuses Push Guard's provider definitions and generic-assignment matcher,
+adds Slack, Google, npm, PyPI, JWT and credential-bearing URL shapes, and detects
+extended OpenAI token shapes. Generic assignments additionally require entropy
+of at least 3.5 bits per character. Obvious fillers and variable references are
+ignored; a random provider token containing a word such as `test` is still
+reported. `# push-guard: ignore` cannot suppress Sweep matches. Complete private
+key blocks are fingerprinted in full; incomplete blocks fingerprint the bounded
+remainder after their header. No private key material is persisted.
+
+Findings contain local path, line, rule, type, class, severity, mode, `fp:` plus
+16 HMAC-SHA256 hex characters, and the literal `<redacted>`. A `.git` directory or
+file establishes possible Git membership by metadata only. **Tracked status is
+always `unknown`**: Sweep does not execute Git or parse its index. Paths are
+redacted when they contain discovered secret values or token shapes; encoded
+path labels are conservatively replaced in full. Reports never include source
+lines. Hints are printed advice only; Sweep never deletes history, rotates a
+credential, edits `.gitignore`, or changes a file's mode.
+
+`--list-targets` does zero scan-target or configuration content reads and creates no fingerprint key or
+other files. It uses defaults and CLI target options only, and does not read the
+default configuration file. Combining it with `--config`, `--baseline`,
+`--output` or `--send` is rejected. It lists intended text reads and explicitly
+marks expected stores as metadata-only. Binary content cannot be identified
+without reading it, so unnamed binary files can appear in this preview and be
+skipped during the scan.
+
+All symlinks, hardlinks, FIFOs, devices, sockets, known browser-profile/keyring
+paths, database filenames and compressed/binary extensions are skipped. Directory
+components are opened with no-follow descriptors, so a symlinked parent cannot
+redirect reads. Text reads are capped at 10 MiB per file; database/compressed
+magic, NUL bytes, binary control bytes or invalid UTF-8 cause a skip.
+Identifiable binary/database/compressed content is rejected after at most 8 KiB
+of header reads; config/state reading is separate and unchanged. A file with
+an unexpected binary/database name needs a bounded read to identify its content;
+no SQLite library is used. Discovery is bounded to 250,000 directory entries and
+10,000 target files and 10,000 findings; baselines are capped at 10 MiB. A run has
+a 100 MiB text-read budget and one shared 45-second inspection deadline. Budget
+exhaustion returns a partial, incomplete report with exit 2. Slow storage can
+still exceed a deadline during an uninterruptible kernel system call.
+
+Exit codes: **0** no findings, **1** findings (including informational store
+checks), **2** usage, runtime, incomplete-inspection or alert-delivery error.
+Intentional policy skips are summarized separately and do not mean inspection
+failed. Missing standard optional source files are normal. Text, JSON, Markdown
+and self-contained escaped HTML are available through `--format`.
+
+A first `--baseline FILE` run reports everything and saves fingerprints, paths,
+lines, rule IDs and modes. Subsequent runs report only entries absent from the
+previous successful scan, then replace that baseline atomically. Changed modes
+or lines are new entries. Removed entries are dropped. An incomplete scan never
+updates the baseline. Baselines are private, validated files and must use the
+same fingerprint key; a missing or changed key requires restoring the original
+key before comparing. Output reports never overwrite existing files. All output
+and baseline files are 0600 at creation; destination parent directories must
+already exist. No source file is repurposed as state.
+
+`report` performs a fresh local scan, because no historical scan results are kept
+by default. `print-timer` prints separate systemd user service/timer texts to
+stdout and installs nothing. A timer uses the defaults or your saved config;
+review and save it yourself after validating the tool on the intended machine.
+
+### Sweep traversal boundaries
+
+Discovery and content scanning share a **45-second inspection deadline**; they
+no longer each receive a separate allowance. Discovery receives at most 20
+seconds of that shared allowance, reserving time for already-found files. Known
+history/config/log roots are considered before broad environment discovery.
+The single-threaded CLI also uses
+a temporary alarm to interrupt slow pattern matching; embedded calls in other
+threads retain cooperative checks. Reporting and writing private results happen
+after inspection stops. An uninterruptible kernel I/O stall cannot be given a
+hard wall-clock guarantee. Mount avoidance is particularly important for that
+reason.
+
+Discovery permits up to 250,000 entries and 10,000 targets. Byte, entry, target,
+finding or time exhaustion returns the findings collected so far, marks the
+report `incomplete: true`, summarizes the budget reason and exits 2. Human
+formats display the incomplete status too. Partial runs never update a baseline.
+
+Heavy package/cache trees are pruned, including `~/.local/share/Trash`, `~/snap`,
+`.cargo`, `.rustup`, `.npm`, `.gradle`, `.m2`, `.yarn`, `.pnpm-store`, `~/go/pkg`,
+`~/.local/share/Steam`, `~/.local/share/flatpak`, `~/.var/app`, `~/.local/lib` and
+`~/.nvm`. Package caches under `~/.cache` (uv, pip, pypoetry, huggingface,
+torch, ms-playwright) and `~/.codex/plugins/cache` are also pruned.
+Environment discovery also prunes cache directories; bounded log
+inspection still considers the configured log roots. Hard safety exclusions
+remain in effect even with explicit roots or include patterns.
+
+Sweep reads Linux `/proc/self/mountinfo` and descriptor mount metadata. These are
+kernel metadata, not target/configuration contents: `--list-targets` still reads
+zero scan-target or configuration content and creates no state. Every mount
+point below HOME is excluded **before stat, open or listing**, including file
+bind mounts and same-device bind mounts. Opened descriptors are checked again
+against HOME's device and kernel mount ID before listing or reading. FUSE,
+rclone, NFS, CIFS and autofs HOME filesystems are refused as scan roots; unknown
+mount metadata produces an incomplete report without target reads. Exclusions
+are counted as `skipped_mount`. There is no override that traverses a mounted
+subtree. Config/state/report/baseline paths inside HOME also reject known mounted
+subtrees before use. Explicit tool-owned XDG/output paths outside HOME remain
+allowed. Checks do not lock the mount namespace against a privileged remount.
+
+Sweep is based on the separately reviewed guard-hardening commit; its only
+changes to the existing guard entry point are Sweep dispatch and a help line.
+It adds no change to the hook body or outgoing Git inspection.
+
+### Sweep configuration and optional alerts
+
+Config: `$XDG_CONFIG_HOME/push-guard-sweep/config.toml`, default
+`~/.config/push-guard-sweep/config.toml`, owned by the current user and mode 0600.
+`--config FILE` selects another file. XDG config/state may be outside HOME;
+scanned targets may not. An example:
+
+```toml
+roots = ["~/projects"]
+include = ["*.trace"]
+exclude = ["scratch/*"]
+log_dirs = ["~/app-logs"]
+alert_channels = ["stdout"]
+# alert_channels = ["slack"]
+# alert_slack_webhook_env = "SWEEP_SLACK_WEBHOOK"
+```
+
+Alerting requires `--send`, even with channels configured. Empty channels mean
+stdout. Supported channels and Net Ward-compatible keys are:
+
+| Channel | Configuration |
+| --- | --- |
+| `stdout` | No credentials; aggregate summary in command output |
+| `slack` | `alert_slack_webhook_env` names an environment variable |
+| `ntfy` | `alert_ntfy_topic`, optional `alert_ntfy_token_env` |
+| `email` | `alert_smtp_host`, `alert_smtp_port`, `alert_smtp_security` (`starttls`/`ssl`), `alert_smtp_from`, `alert_email`, optional `alert_smtp_username` and `alert_smtp_password_env` |
+
+Never put webhook URLs, tokens or SMTP passwords in config: only their
+**environment variable names**. HTTPS is required except for loopback HTTP;
+SMTP encryption is required off loopback. Redirects are rejected. Connections
+use a five-second timeout. Failed sends are reported by channel only, without
+leaking credential-bearing URLs. Alerts carry only aggregate counts by rule,
+class and severity, with no paths, fingerprints, source lines or secret values,
+and end with `run push-guard-sweep report locally for details`. Private keyed
+receipts suppress repeated matching alerts to the same destination for 24 hours;
+a changed destination is eligible again. No real alert destination is configured
+by the package.
 
 ## Current Signals
 
