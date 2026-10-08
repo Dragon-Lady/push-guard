@@ -1102,6 +1102,7 @@ class PushGuardTests(unittest.TestCase):
 
         with (
             patch("push_guard.guard._diffs_for_push_ref", return_value=[finding_diff]),
+            patch("push_guard.guard._scan_history_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_gitignored", return_value=[]),
             patch(

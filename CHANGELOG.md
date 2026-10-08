@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Inspect raw Git content with text conversion, external diff helpers, and color
+  disabled; do not allow binary attributes or custom prefixes to hide findings.
+- Decode Git-quoted paths and distinguish added `++` content from patch headers.
+- Inspect complete reachable history for new remote refs instead of excluding
+  commits merely because a different remote-tracking ref already contains them.
+- Check added/changed private paths throughout outgoing history, including files
+  deleted before the tip, while keeping normal trusted-base scope and exceptions.
+- Redact recognized credentials in finding paths and diagnostic metadata, and
+  escape terminal controls in user-visible metadata.
+- Recognize exact affected MCP pins with extras and PhantomSub package identities
+  in npm v3 `node_modules` lockfile keys, including nested dependencies.
+
 ## 0.3.7 - 2026-09-30
 
 ### Build

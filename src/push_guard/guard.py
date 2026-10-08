@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
@@ -646,6 +647,39 @@ class SecretFinding:
     reason: str
     evidence: str
 
+    def __post_init__(self) -> None:
+        # Paths and local rule patterns are untrusted metadata too. A filename
+        # can itself contain a matched credential even when evidence is redacted.
+        object.__setattr__(self, "path", _redact_metadata(self.path))
+        object.__setattr__(self, "reason", _redact_metadata(self.reason))
+
+
+def _redact_metadata(value: str) -> str:
+    """Never return a recognized credential embedded in diagnostic metadata."""
+    for variant in [value, *_normalized_secret_shape_variants(value)]:
+        if any(pattern.search(variant) for _, pattern, _, _ in SECRET_PATTERNS):
+            return "<redacted>"
+        match = GENERIC_ASSIGNMENT.search(variant)
+        if match and not _value_is_placeholder(match.group(1)):
+            return "<redacted>"
+    return value
+
+
+def _display_metadata(value: str) -> str:
+    # Preserve exact path data for rule matching/API consumers, but never let a
+    # filename or diagnostic control the terminal or forge additional lines.
+    value = _redact_metadata(value)
+    return "".join(
+        (f"\\x{ord(char):02x}" if ord(char) <= 255 else f"\\u{ord(char):04x}")
+        if unicodedata.category(char) in {"Cc", "Cf"} else char
+        for char in value
+    )
+
+
+class _GuardArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        super().error(_display_metadata(message))
+
 
 class PushGuardInspectionError(RuntimeError):
     """Raised when Push Guard cannot inspect Git push content cleanly."""
@@ -670,13 +704,14 @@ def scan_git_push(repo: str | Path, stdin_text: str) -> list[SecretFinding]:
         blocked_terms = load_blocked_terms(repo_path)
         for diff_text in diffs:
             findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
+        findings.extend(_scan_history_private_paths(repo_path, local_sha, remote_sha, private_patterns))
         if local_sha not in seen_path_shas:
             seen_path_shas.add(local_sha)
             findings.extend(
                 _scan_tree_for_private_paths(repo_path, local_sha, private_patterns)
             )
             findings.extend(_scan_tree_for_gitignored(repo_path, local_sha))
-    return findings
+    return list(dict.fromkeys(findings))
 
 
 def scan_git_range(
@@ -692,14 +727,45 @@ def scan_git_range(
     blocked_terms = load_blocked_terms(repo_path)
     for diff_text in _diffs_for_push_ref(repo_path, head_sha, base_sha):
         findings.extend(_scan_diff(diff_text, blocked_terms=blocked_terms))
+    private_patterns = load_private_path_patterns(repo_path)
+    findings.extend(_scan_history_private_paths(repo_path, head_sha, base_sha, private_patterns))
     findings.extend(
         _scan_tree_for_private_paths(
             repo_path,
             head_sha,
-            load_private_path_patterns(repo_path),
+            private_patterns,
         )
     )
     findings.extend(_scan_tree_for_gitignored(repo_path, head_sha))
+    return list(dict.fromkeys(findings))
+
+
+def _scan_history_private_paths(
+    repo: Path, local_sha: str, remote_sha: str, patterns: list[str]
+) -> list[SecretFinding]:
+    """Private material remains published when an outgoing later commit deletes it."""
+    if not patterns:
+        return []
+    findings: list[SecretFinding] = []
+    seen: set[str] = set()
+    for commit in _outgoing_commits(repo, local_sha, remote_sha):
+        # Inspect added/changed paths, not whole historical trees. Unchanged
+        # private paths confined to the trusted base do not expand this range.
+        output = _run_git(repo, [
+            "diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r",
+            "--no-ext-diff", "--no-textconv", "--no-renames",
+            "--diff-merges=first-parent", "--diff-filter=ACMRT", commit,
+        ])
+        for path in output.split("\0"):
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            matched = path_matches_private(path, patterns)
+            if matched:
+                findings.append(SecretFinding(
+                    "private_path.match", path, 0,
+                    f"Private/internal path (pattern: {matched})", "<redacted>",
+                ))
     return findings
 
 
@@ -746,7 +812,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _pre_push_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _GuardArgumentParser(
         prog="push-guard",
         description="Local pre-push secret guard. Blocks likely secret pushes.",
     )
@@ -762,7 +828,7 @@ def _pre_push_main(argv: list[str]) -> int:
         findings = scan_git_push(args.repo, stdin_text)
     except RuntimeError as exc:
         print("Push Guard could not inspect this push.", file=sys.stderr)
-        print(str(exc), file=sys.stderr)
+        print(_display_metadata(str(exc)), file=sys.stderr)
         print("Blocking push because inspection failed.", file=sys.stderr)
         return 1
 
@@ -783,8 +849,8 @@ def _pre_push_main(argv: list[str]) -> int:
     for finding in findings:
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {finding.path}{line_suffix} "
-            f"({finding.reason}; {finding.evidence})",
+            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
+            f"({_display_metadata(finding.reason)}; {finding.evidence})",
             file=sys.stderr,
         )
     print(
@@ -796,7 +862,7 @@ def _pre_push_main(argv: list[str]) -> int:
 
 
 def _scan_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _GuardArgumentParser(
         prog="push-guard scan",
         description="Scan a committed Git range without attempting a push.",
     )
@@ -821,20 +887,20 @@ def _scan_main(argv: list[str]) -> int:
         findings = scan_git_range(args.repo, args.base, args.head)
     except RuntimeError as exc:
         print("Push Guard could not inspect this range.", file=sys.stderr)
-        print(str(exc), file=sys.stderr)
+        print(_display_metadata(str(exc)), file=sys.stderr)
         print("Blocking publication because inspection failed.", file=sys.stderr)
         return 1
 
     if not findings:
-        print(f"Push Guard found no blocking findings in {args.base}..{args.head}.")
+        print(f"Push Guard found no blocking findings in {_display_metadata(args.base)}..{_display_metadata(args.head)}.")
         return 0
 
     print("Push Guard blocked this range. Secret values are redacted.", file=sys.stderr)
     for finding in findings:
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
-            f"- {finding.rule_id} at {finding.path}{line_suffix} "
-            f"({finding.reason}; {finding.evidence})",
+            f"- {finding.rule_id} at {_display_metadata(finding.path)}{line_suffix} "
+            f"({_display_metadata(finding.reason)}; {finding.evidence})",
             file=sys.stderr,
         )
     print("Review the reported paths locally before publication.", file=sys.stderr)
@@ -842,7 +908,7 @@ def _scan_main(argv: list[str]) -> int:
 
 
 def _install_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _GuardArgumentParser(
         prog="push-guard install",
         description="Install Push Guard as this repository's local pre-push hook.",
     )
@@ -870,10 +936,10 @@ def _install_main(argv: list[str]) -> int:
             allow_home_repo=args.allow_home_repo,
         )
     except RuntimeError as exc:
-        print(f"Push Guard install failed: {exc}", file=sys.stderr)
+        print(f"Push Guard install failed: {_display_metadata(str(exc))}", file=sys.stderr)
         return 1
 
-    print(f"Push Guard installed: {hook_path}")
+    print(f"Push Guard installed: {_display_metadata(str(hook_path))}")
     return 0
 
 
@@ -1284,6 +1350,9 @@ def _scan_line_for_phantomsub_npm(
             rf'(?<![\w@.-]){escaped}@(?:npm:)?\d', line, re.I
         ) or (name == "package.json" and re.search(
             rf'["\']name["\']\s*:\s*["\']{escaped}["\']', line, re.I
+        )) or (name in {"package-lock.json", "npm-shrinkwrap.json"} and re.search(
+            rf'["\'](?:node_modules/(?:@[^/"\']+/)?[^/"\']+/)*node_modules/{escaped}["\']\s*:',
+            line, re.I,
         )):
             return [SecretFinding(
                 "workflow.phantomsub_ox_npm_package", path, line_number,
@@ -1322,7 +1391,8 @@ def _scan_line_for_advisory_dependencies(
 
     if name in {"requirements.txt", "pyproject.toml"}:
         for match in re.finditer(
-            r'(?<![\w.-])mcp\s*==\s*(\d+\.\d+\.\d+(?:a\d+)?)(?=[\s"\'\],;#]|$)',
+            r'(?<![\w.-])mcp(?:\[\s*[A-Za-z0-9_.-]+(?:\s*,\s*[A-Za-z0-9_.-]+)*\s*\])?'
+            r'\s*==\s*(\d+\.\d+\.\d+(?:a\d+)?)(?=[\s"\'\],;#]|$)',
             line,
             re.I,
         ):
@@ -1806,11 +1876,14 @@ def _tree_paths(repo: Path, treeish: str) -> list[str]:
     return [path for path in output.split("\0") if path]
 
 
-def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
+def _outgoing_commits(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
     if remote_sha == ZERO_SHA:
+        # The remote has no trusted base for this ref. Other remote-tracking
+        # refs may belong to private repositories and cannot justify excluding
+        # objects from a first push to a different destination.
         commits = _run_git(
             repo,
-            ["rev-list", "--reverse", local_sha, "--not", "--remotes"],
+            ["rev-list", "--reverse", local_sha],
         ).splitlines()
         if not commits:
             commits = [local_sha]
@@ -1822,6 +1895,10 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str
             ["rev-list", "--reverse", local_sha, f"^{remote_sha}"],
         ).splitlines()
 
+    return commits
+
+
+def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str]:
     return [
         _run_git(
             repo,
@@ -1830,12 +1907,17 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str) -> list[str
                 "--format=",
                 "--unified=0",
                 "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--text",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
                 "--diff-merges=first-parent",
                 "--diff-filter=ACMRT",
                 commit,
             ],
         )
-        for commit in commits
+        for commit in _outgoing_commits(repo, local_sha, remote_sha)
     ]
 
 
@@ -1848,8 +1930,12 @@ def _scan_diff(
     in_hunk = False
     terms = blocked_terms or []
     for line in diff_text.splitlines():
-        if line.startswith("+++ b/"):
-            current_path = line[6:]
+        if line.startswith("diff --git "):
+            current_path = "<diff>"
+            in_hunk = False
+            continue
+        if not in_hunk and line.startswith("+++ "):
+            current_path = _decode_diff_path(line[4:])
             continue
         if line.startswith("@@"):
             new_line = _parse_hunk_new_line(line)
@@ -1857,7 +1943,7 @@ def _scan_diff(
             continue
         if not in_hunk:
             continue
-        if line.startswith("+") and not line.startswith("+++"):
+        if line.startswith("+"):
             body = line[1:]
             findings.extend(_scan_line(body, current_path, max(new_line, 1)))
             findings.extend(
@@ -1871,6 +1957,47 @@ def _scan_diff(
             continue
         new_line += 1
     return findings
+
+
+def _decode_diff_path(value: str) -> str:
+    """Decode Git's C-quoted UTF-8 path format without evaluating source text."""
+    if value.startswith('"'):
+        if not value.endswith('"'):
+            raise PushGuardInspectionError("Invalid quoted path in Git diff")
+        encoded = value[1:-1]
+        decoded = bytearray()
+        escapes = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+        index = 0
+        while index < len(encoded):
+            char = encoded[index]
+            if char != "\\":
+                decoded.extend(char.encode("utf-8"))
+                index += 1
+                continue
+            index += 1
+            if index == len(encoded):
+                raise PushGuardInspectionError("Invalid escape in Git diff path")
+            char = encoded[index]
+            if char in escapes:
+                decoded.append(escapes[char])
+                index += 1
+            elif char in "01234567":
+                end = index + 1
+                while end < min(index + 3, len(encoded)) and encoded[end] in "01234567":
+                    end += 1
+                number = int(encoded[index:end], 8)
+                if number > 255:
+                    raise PushGuardInspectionError("Invalid octal escape in Git diff path")
+                decoded.append(number)
+                index = end
+            else:
+                raise PushGuardInspectionError("Invalid escape in Git diff path")
+        value = decoded.decode("utf-8", errors="replace")
+    if value == "/dev/null":
+        return "<deleted>"
+    if not value.startswith("b/"):
+        raise PushGuardInspectionError("Unexpected path prefix in Git diff")
+    return value[2:]
 
 
 def _parse_hunk_new_line(line: str) -> int:

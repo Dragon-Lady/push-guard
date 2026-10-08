@@ -123,9 +123,11 @@ credential vault carries no secret *pattern* in its body, yet pushing it is
 still a leak. Push Guard also blocks a push when the pushed tree contains a file
 whose **path** is private.
 
-It checks the pushed tip tree (not just the diff), so a file that should never
-have been tracked is flagged on every push until it is removed -- not only on
-the commit that first added it.
+It checks the pushed tip tree and added/changed private paths in every outgoing
+commit. A private file added and then deleted before the tip is still blocked:
+its contents remain in the transmitted history. An unchanged private file at
+the tip is also flagged on every push until it is removed. Ordinary range scans
+do not rescan private paths confined to the trusted remote base.
 
 Generic defaults are matched by basename at any depth: `*.kdbx`, `*.pem`,
 `id_rsa`, `id_ed25519`, `.env`, `.env.*`, `*_keys.json`, `credentials.json`,
@@ -222,6 +224,9 @@ push-guard scan --repo . --base origin/main --head HEAD
 
 This scans every commit introduced by `base..head`, including content added in
 one commit and removed before the head, plus the head tree's private-path rules.
+When Git reports a new remote ref with no trusted base, the hook scans all
+reachable history. Remote-tracking refs from other destinations never exclude
+objects from that first-push inspection.
 It does not scan uncommitted working-tree changes. Commit locally first, then
 run the command. Project-specific `.push-guard-private-paths` rules remain local
 unless that ignored file is separately provisioned in the workspace.
