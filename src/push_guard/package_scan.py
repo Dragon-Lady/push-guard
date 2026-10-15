@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import stat
 import os
 import tarfile
@@ -16,7 +15,6 @@ from .guard import (
     _scan_line_for_blocked_terms,
     load_blocked_terms,
     load_explicit_blocked_terms,
-    load_fixture_allow_list,
     load_private_path_patterns,
     path_matches_private,
     scan_text_for_secrets,
@@ -26,34 +24,64 @@ from .guard import (
 MAX_MEMBERS = 10_000
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
-_SDIST_WRAP_DIR = re.compile(r"^.*-\d[\w.]*$")
 
 
-def normalize_archive_member_path(name: str) -> str:
-    """Map archive member paths onto repo-relative allow paths.
-
-    npm pack prefixes members with ``package/``. Python sdists wrap them in a
-    single ``{name}-{version}/`` directory. Those wrappers are stripped so a
-    reviewed ``src/checker.js`` entry matches ``package/src/checker.js``.
-    """
+def _clean_member_parts(name: str) -> list[str]:
     normalized = name.replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
     normalized = normalized.lstrip("/")
-    parts = [part for part in normalized.split("/") if part and part != "."]
-    if not parts:
-        return ""
-    first = parts[0]
-    if first == "package" or _looks_like_sdist_wrap_dir(first):
+    return [part for part in normalized.split("/") if part and part != "."]
+
+
+def _tar_archive_stem(name: str) -> str:
+    lowered = name.lower()
+    for suffix in (".tar.gz", ".tgz"):
+        if lowered.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def detect_archive_root(archive: str | Path) -> str | None:
+    """Return the verified single wrapper directory of a tar distribution.
+
+    Only two wrappers are recognized, and only when *every* member lives under
+    that one directory: ``package/`` (npm pack) and ``{stem}/`` where ``stem``
+    is the archive filename without ``.tar.gz``/``.tgz`` (Python sdist).
+    Wheels have no wrapper and always return ``None``.
+    """
+    archive_path = Path(archive)
+    if not _is_tar_distribution(archive_path.name):
+        return None
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as package:
+            names = [member.name for member in package]
+    except (OSError, tarfile.TarError, EOFError) as exc:
+        raise PushGuardInspectionError("could not inspect distribution archive") from exc
+    roots: set[str] = set()
+    for name in names:
+        parts = _clean_member_parts(name)
+        if parts:
+            roots.add(parts[0])
+    if len(roots) != 1:
+        return None
+    (root,) = roots
+    if root == "package" or root == _tar_archive_stem(archive_path.name):
+        return root
+    return None
+
+
+def normalize_archive_member_path(name: str, root: str | None = None) -> str:
+    """Map an archive member path onto a repo-relative allow path.
+
+    Only the verified archive ``root`` (see :func:`detect_archive_root`) is
+    stripped. Without a root nothing is stripped, so a lookalike directory
+    such as ``evil-9/src/checker.js`` never matches ``src/checker.js``.
+    """
+    parts = _clean_member_parts(name)
+    if root is not None and len(parts) > 1 and parts[0] == root:
         parts = parts[1:]
     return "/".join(parts)
-
-
-def _looks_like_sdist_wrap_dir(name: str) -> bool:
-    lowered = name.lower()
-    if lowered.endswith((".dist-info", ".data", ".egg-info")):
-        return False
-    return _SDIST_WRAP_DIR.fullmatch(name) is not None
 
 
 def _is_tar_distribution(name: str) -> bool:
@@ -67,7 +95,6 @@ def scan_distribution(
     *,
     require_explicit_terms: bool = False,
     privacy_only: bool = False,
-    pack_allow: dict[str, set[str]] | None = None,
 ) -> list[SecretFinding]:
     """Scan sdist/wheel payloads without extracting files or making network calls.
 
@@ -132,9 +159,6 @@ def scan_distribution(
         if b"\0" in data[:4096]:
             return
         text = data.decode("utf-8-sig", errors="replace")
-        if pack_allow is not None and normalize_archive_member_path(name) == ".push-guard-allow":
-            for path, rules in load_fixture_allow_list(text=text).items():
-                pack_allow.setdefault(path, set()).update(rules)
         if not privacy_only:
             findings.extend(scan_text_for_secrets(text, path=safe_name))
         for line_number, line in enumerate(text.splitlines(), start=1):

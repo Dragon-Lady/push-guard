@@ -231,17 +231,26 @@ class PackageScanTests(unittest.TestCase):
         self.assertEqual(1, len(remaining))
         self.assertEqual(0, allowed)
         remaining, allowed = _apply_fixture_allow_list(
-            [finding], allow, normalize_path=normalize_archive_member_path
+            [finding], allow,
+            normalize_path=lambda path: normalize_archive_member_path(path, "package"),
         )
         self.assertEqual([], remaining)
         self.assertEqual(1, allowed)
         self.assertEqual(
             "src/checker.js",
-            normalize_archive_member_path("package/src/checker.js"),
+            normalize_archive_member_path("package/src/checker.js", "package"),
         )
         self.assertEqual(
             "src/checker.js",
-            normalize_archive_member_path("linux-supply-chain-guard-0.2.0/src/checker.js"),
+            normalize_archive_member_path(
+                "linux-supply-chain-guard-0.2.0/src/checker.js",
+                "linux-supply-chain-guard-0.2.0",
+            ),
+        )
+        # Without a verified root nothing is stripped.
+        self.assertEqual(
+            "package/src/checker.js",
+            normalize_archive_member_path("package/src/checker.js"),
         )
 
     def test_scan_package_allow_file_permits_listed_ioc_and_still_blocks_others(self):
@@ -313,24 +322,94 @@ class PackageScanTests(unittest.TestCase):
             self.assertNotIn("Lena", output)
             self.assertNotIn("private-ledger", repr(output))
 
-    def test_scan_package_reads_allow_file_from_pack_when_absent_in_repo(self):
+    def _scan_package(self, root, *archives):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
+             patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+             patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+            code = main(["scan-package", "--repo", str(root), "--no-infer", *map(str, archives)])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_scan_package_ignores_allow_file_embedded_in_pack(self):
+        hit = b"watch gh-token-monitor persistence\n"  # push-guard: ignore
+        allow = b"src/checker.js workflow.hades_github_token_monitor\n"
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             archive = root / "detector-0.2.0.tgz"
-            allow = (
-                "src/checker.js workflow.hades_github_token_monitor\n"
-            ).encode()
             _write_tgz(archive, {
                 "package/.push-guard-allow": allow,
-                "package/src/checker.js": b"watch gh-token-monitor persistence\n",  # push-guard: ignore
+                "package/src/checker.js": hit,
             })
-            stdout = io.StringIO()
-            with patch("sys.stdout", stdout), \
-                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
-                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
-                code = main(["scan-package", "--repo", str(root), "--no-infer", str(archive)])
+            # No repo allow file: the embedded one must not clear the hit.
+            code, stdout, stderr = self._scan_package(root, archive)
+            self.assertEqual(1, code)
+            self.assertNotIn("allowed", stdout)
+            self.assertIn("workflow.hades_github_token_monitor", stderr)
+
+            # Repo allow file present but for another path: the pack still
+            # cannot self-allow its own hit.
+            (root / ".push-guard-allow").write_text(
+                "src/other.js workflow.hades_github_token_monitor\n"
+            )
+            code, stdout, stderr = self._scan_package(root, archive)
+            self.assertEqual(1, code)
+            self.assertIn("workflow.hades_github_token_monitor", stderr)
+
+    def test_scan_package_allow_lists_do_not_leak_across_archives(self):
+        hit = b"watch gh-token-monitor persistence\n"  # push-guard: ignore
+        allow = b"src/checker.js workflow.hades_github_token_monitor\n"
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            allow_only = root / "allow-only-1.0.tgz"
+            _write_tgz(allow_only, {"package/.push-guard-allow": allow})
+            victim = root / "victim-1.0.tgz"
+            _write_tgz(victim, {"package/src/checker.js": hit})
+            for order in ((allow_only, victim), (victim, allow_only)):
+                code, stdout, stderr = self._scan_package(root, *order)
+                self.assertEqual(1, code)
+                self.assertNotIn("allowed", stdout)
+                self.assertIn("workflow.hades_github_token_monitor", stderr)
+
+    def test_scan_package_strips_only_verified_archive_root(self):
+        hit = b"watch gh-token-monitor persistence\n"  # push-guard: ignore
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".push-guard-allow").write_text(
+                "src/checker.js workflow.hades_github_token_monitor\n"
+            )
+            # Lookalike versioned dir in a tgz is not a verified root.
+            evil_tgz = root / "demo-1.0.tgz"
+            _write_tgz(evil_tgz, {"evil-9/src/checker.js": hit})
+            code, _, stderr = self._scan_package(root, evil_tgz)
+            self.assertEqual(1, code)
+            self.assertIn("workflow.hades_github_token_monitor", stderr)
+
+            # Mixed roots: package/ is not the single common root.
+            mixed = root / "mixed-1.0.tgz"
+            _write_tgz(mixed, {"package/src/checker.js": hit, "README.md": b"x\n"})
+            code, _, stderr = self._scan_package(root, mixed)
+            self.assertEqual(1, code)
+
+            # Wheels never strip a first directory.
+            wheel = root / "demo-1.0-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as package:
+                package.writestr("fixtures-2/src/checker.js", hit)
+                package.writestr("package/src/checker.js", hit)
+            code, stdout, stderr = self._scan_package(root, wheel)
+            self.assertEqual(1, code)
+            self.assertNotIn("allowed", stdout)
+
+            # sdist root must match the archive filename.
+            sdist = root / "demo-1.0.tar.gz"
+            _write_tgz(sdist, {"demo-1.0/src/checker.js": hit})
+            code, stdout, _ = self._scan_package(root, sdist)
             self.assertEqual(0, code)
-            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout.getvalue())
+            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout)
+            wrong = root / "demo-1.1.tar.gz"
+            _write_tgz(wrong, {"demo-1.0/src/checker.js": hit})
+            code, _, _ = self._scan_package(root, wrong)
+            self.assertEqual(1, code)
 
     def test_range_scan_reuses_the_same_allow_list_helpers(self):
         with TemporaryDirectory() as tmpdir:

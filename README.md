@@ -414,13 +414,15 @@ src/checker.js workflow.hades_github_token_monitor,workflow.trinitite_payload_ma
 ```
 
 Personal, private-list, and private-path matches cannot be allowed. Wildcard
-rule ids and pseudo-paths are ignored. `scan-package` loads the file from
-`--repo` (the checkout used for private rules) and, if present, from
-`.push-guard-allow` inside the archive. Pack member paths are normalized
-before matching: a leading `package/` from npm pack and a single
-`{name}-{version}/` sdist prefix are stripped so repo-relative entries match.
-If the allow file is not shipped in the pack, pass `--repo` at the checkout
-that owns it. Allowed hits are printed as
+rule ids and pseudo-paths are ignored. `scan-package` loads the file only
+from `--repo` (the reviewed checkout used for private rules); a
+`.push-guard-allow` shipped inside a scanned archive is ignored, so a package
+cannot clear its own hits. Entries are matched separately for each archive.
+Before matching, only a verified single wrapper directory is stripped: a
+`package/` root shared by every member of an npm tarball, or a `{stem}/` root
+matching the sdist filename (`demo-1.0.tar.gz` -> `demo-1.0/`). Wheel paths
+are matched as-is.
+Pass `--repo` at the checkout that owns the allow file. Allowed hits are printed as
 `Push Guard allowed N reviewed workflow hit(s).`
 Packages that still need a broader skip can use `--privacy-only` to check
 private terms and paths without the other secret/workflow rules.
