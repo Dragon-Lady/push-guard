@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Honor a reviewed, rule-scoped `.push-guard-allow` in `scan-package` (and
+  `push-guard scan`), with npm-pack `package/` and sdist wrap-dir path
+  normalization, so detector catalogs can pass full-mode publish scans
+  without `--privacy-only`. Personal, private, wildcard, and pseudo-path
+  entries still cannot allow a hit.
+
 ## 0.4.1 - release pending
 
 - Infer local account and machine identifiers as redacted personal terms for

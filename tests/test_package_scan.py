@@ -9,10 +9,11 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from push_guard.guard import (
-    PushGuardInspectionError, _identity_terms, main, scan_git_push,
+    PushGuardInspectionError, SecretFinding, _apply_fixture_allow_list,
+    _identity_terms, load_fixture_allow_list, main, scan_git_push,
     scan_git_range,
 )
-from push_guard.package_scan import scan_distribution
+from push_guard.package_scan import normalize_archive_member_path, scan_distribution
 
 
 class PackageScanTests(unittest.TestCase):
@@ -214,6 +215,159 @@ class PackageScanTests(unittest.TestCase):
             self.assertEqual(1, code)
             self.assertIn("personal.blocked_term", stderr.getvalue())
             self.assertNotIn("Lena", stderr.getvalue())
+
+    def test_pack_prefix_does_not_match_repo_relative_allow_without_normalization(self):
+        allow = load_fixture_allow_list(
+            text="src/checker.js workflow.hades_github_token_monitor\n"
+        )
+        finding = SecretFinding(
+            "workflow.hades_github_token_monitor",
+            "package/src/checker.js",
+            1,
+            "Hades/Miasma GitHub token-monitor persistence marker",
+            "<redacted>",
+        )
+        remaining, allowed = _apply_fixture_allow_list([finding], allow)
+        self.assertEqual(1, len(remaining))
+        self.assertEqual(0, allowed)
+        remaining, allowed = _apply_fixture_allow_list(
+            [finding], allow, normalize_path=normalize_archive_member_path
+        )
+        self.assertEqual([], remaining)
+        self.assertEqual(1, allowed)
+        self.assertEqual(
+            "src/checker.js",
+            normalize_archive_member_path("package/src/checker.js"),
+        )
+        self.assertEqual(
+            "src/checker.js",
+            normalize_archive_member_path("linux-supply-chain-guard-0.2.0/src/checker.js"),
+        )
+
+    def test_scan_package_allow_file_permits_listed_ioc_and_still_blocks_others(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".push-guard-allow").write_text(
+                "src/checker.js workflow.hades_github_token_monitor\n"
+            )
+            archive = root / "detector-0.2.0.tgz"
+            _write_tgz(archive, {
+                "package/src/checker.js": b"watch gh-token-monitor persistence\n",  # push-guard: ignore
+                "package/other.js": b"payload 3FWCvzduYZg.js marker\n",  # push-guard: ignore
+            })
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
+                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+                code = main(["scan-package", "--repo", str(root), "--no-infer", str(archive)])
+            self.assertEqual(1, code)
+            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout.getvalue())
+            self.assertIn("workflow.trinitite_payload_marker", stderr.getvalue())
+            self.assertNotIn("workflow.hades_github_token_monitor", stderr.getvalue())
+
+            allowed_only = root / "detector-allowed.tgz"
+            _write_tgz(allowed_only, {
+                "package/src/checker.js": b"watch gh-token-monitor persistence\n",  # push-guard: ignore
+            })
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), \
+                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+                code = main(["scan-package", "--repo", str(root), "--no-infer", str(allowed_only)])
+            self.assertEqual(0, code)
+            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout.getvalue())
+
+    def test_scan_package_cannot_allow_personal_or_private_matches(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".push-guard-private-paths").write_text("private-ledger.txt\n")
+            (root / ".push-guard-allow").write_text(
+                "\n".join((
+                    "package/REVIEW.md personal.blocked_term",
+                    "REVIEW.md personal.blocked_term,workflow.*",
+                    "<redacted member> private_path.match",
+                    "private-ledger.txt private_path.match",
+                    "src/checker.js workflow.*",
+                    "src/checker.js personal.blocked_term",
+                )) + "\n"
+            )
+            archive = root / "demo-1.0.tgz"
+            _write_tgz(archive, {
+                "package/REVIEW.md": b"Lena approved this release.\n",
+                "package/private-ledger.txt": b"clean text\n",
+                "package/src/checker.js": b"watch gh-token-monitor persistence\n",  # push-guard: ignore
+            })
+            stderr = io.StringIO()
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr), \
+                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "Lena", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+                code = main(["scan-package", "--repo", str(root), "--no-infer", str(archive)])
+            self.assertEqual(1, code)
+            output = stderr.getvalue()
+            self.assertIn("personal.blocked_term", output)
+            self.assertIn("private_path.match", output)
+            self.assertIn("workflow.hades_github_token_monitor", output)
+            self.assertNotIn("allowed", stdout.getvalue())
+            self.assertNotIn("Lena", output)
+            self.assertNotIn("private-ledger", repr(output))
+
+    def test_scan_package_reads_allow_file_from_pack_when_absent_in_repo(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            archive = root / "detector-0.2.0.tgz"
+            allow = (
+                "src/checker.js workflow.hades_github_token_monitor\n"
+            ).encode()
+            _write_tgz(archive, {
+                "package/.push-guard-allow": allow,
+                "package/src/checker.js": b"watch gh-token-monitor persistence\n",  # push-guard: ignore
+            })
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), \
+                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+                code = main(["scan-package", "--repo", str(root), "--no-infer", str(archive)])
+            self.assertEqual(0, code)
+            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout.getvalue())
+
+    def test_range_scan_reuses_the_same_allow_list_helpers(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, capture_output=True, text=True, check=True
+                ).stdout.strip()
+            git("init", "-q")
+            git("config", "user.name", "Package Test")
+            git("config", "user.email", "package-test@example.invalid")
+            (root / "README.md").write_text("base\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            (root / "src").mkdir()
+            (root / "src" / "checker.js").write_text("watch gh-token-monitor persistence\n")  # push-guard: ignore
+            (root / ".push-guard-allow").write_text(
+                "src/checker.js workflow.hades_github_token_monitor\n"
+            )
+            git("add", ".")
+            git("commit", "-qm", "detector")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), \
+                 patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
+                 patch.dict(os.environ, {"PUSH_GUARD_BLOCKED_TERMS": "", "PUSH_GUARD_INFER_IDENTITY": "0"}):
+                code = main(["scan", "--repo", str(root), "--base", base, "--head", "HEAD", "--no-infer"])
+            self.assertEqual(0, code)
+            self.assertIn("allowed 1 reviewed workflow hit(s)", stdout.getvalue())
+
+
+def _write_tgz(path: Path, members: dict[str, bytes]) -> None:
+    with tarfile.open(path, "w:gz") as package:
+        for name, content in members.items():
+            item = tarfile.TarInfo(name)
+            item.size = len(content)
+            package.addfile(item, io.BytesIO(content))
 
 
 if __name__ == "__main__":

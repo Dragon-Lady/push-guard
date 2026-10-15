@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import stat
 import os
 import tarfile
@@ -15,6 +16,7 @@ from .guard import (
     _scan_line_for_blocked_terms,
     load_blocked_terms,
     load_explicit_blocked_terms,
+    load_fixture_allow_list,
     load_private_path_patterns,
     path_matches_private,
     scan_text_for_secrets,
@@ -24,6 +26,39 @@ from .guard import (
 MAX_MEMBERS = 10_000
 MAX_MEMBER_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
+_SDIST_WRAP_DIR = re.compile(r"^.*-\d[\w.]*$")
+
+
+def normalize_archive_member_path(name: str) -> str:
+    """Map archive member paths onto repo-relative allow paths.
+
+    npm pack prefixes members with ``package/``. Python sdists wrap them in a
+    single ``{name}-{version}/`` directory. Those wrappers are stripped so a
+    reviewed ``src/checker.js`` entry matches ``package/src/checker.js``.
+    """
+    normalized = name.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts:
+        return ""
+    first = parts[0]
+    if first == "package" or _looks_like_sdist_wrap_dir(first):
+        parts = parts[1:]
+    return "/".join(parts)
+
+
+def _looks_like_sdist_wrap_dir(name: str) -> bool:
+    lowered = name.lower()
+    if lowered.endswith((".dist-info", ".data", ".egg-info")):
+        return False
+    return _SDIST_WRAP_DIR.fullmatch(name) is not None
+
+
+def _is_tar_distribution(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(".tar.gz") or lowered.endswith(".tgz")
 
 
 def scan_distribution(
@@ -32,6 +67,7 @@ def scan_distribution(
     *,
     require_explicit_terms: bool = False,
     privacy_only: bool = False,
+    pack_allow: dict[str, set[str]] | None = None,
 ) -> list[SecretFinding]:
     """Scan sdist/wheel payloads without extracting files or making network calls.
 
@@ -96,6 +132,9 @@ def scan_distribution(
         if b"\0" in data[:4096]:
             return
         text = data.decode("utf-8-sig", errors="replace")
+        if pack_allow is not None and normalize_archive_member_path(name) == ".push-guard-allow":
+            for path, rules in load_fixture_allow_list(text=text).items():
+                pack_allow.setdefault(path, set()).update(rules)
         if not privacy_only:
             findings.extend(scan_text_for_secrets(text, path=safe_name))
         for line_number, line in enumerate(text.splitlines(), start=1):
@@ -115,7 +154,7 @@ def scan_distribution(
                         raise PushGuardInspectionError("non-regular distribution member")
                     with package.open(member) as stream:
                         inspect(member.filename, member.file_size, stream)
-        elif archive_path.name.endswith(".tar.gz"):
+        elif _is_tar_distribution(archive_path.name):
             with tarfile.open(archive_path, mode="r:gz") as package:
                 for member in package:
                     if member.isdir():
@@ -129,7 +168,7 @@ def scan_distribution(
                     with stream:
                         inspect(member.name, member.size, stream)
         else:
-            raise PushGuardInspectionError("expected a wheel or .tar.gz source archive")
+            raise PushGuardInspectionError("expected a wheel, .tar.gz, or .tgz archive")
     except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError, RuntimeError) as exc:
         if isinstance(exc, PushGuardInspectionError):
             raise
