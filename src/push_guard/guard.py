@@ -1128,7 +1128,11 @@ def _scan_main(argv: list[str]) -> int:
 
 
 def _scan_package_main(argv: list[str]) -> int:
-    from .package_scan import normalize_archive_member_path, scan_distribution
+    from .package_scan import (
+        detect_archive_root,
+        normalize_archive_member_path,
+        scan_distribution,
+    )
 
     parser = _GuardArgumentParser(
         prog="push-guard scan-package",
@@ -1157,25 +1161,28 @@ def _scan_package_main(argv: list[str]) -> int:
             print(f"Push Guard loaded {explicit_count} explicit private term(s).")
         if args.require_explicit_terms and explicit_count < args.min_terms:
             raise PushGuardInspectionError("too few explicit private terms for this release scan")
+        # Only the reviewed repo's allow file is trusted. A .push-guard-allow
+        # shipped inside a scanned artifact is ignored so a package cannot
+        # clear its own hits. Allow entries are matched per archive, using
+        # that archive's verified wrapper root only.
         allow_list = load_fixture_allow_list(args.repo)
         findings: list[SecretFinding] = []
+        allowed_count = 0
         for archive in args.archives:
-            pack_allow: dict[str, set[str]] = {}
-            findings.extend(
-                scan_distribution(
-                    archive, args.repo,
-                    require_explicit_terms=args.require_explicit_terms,
-                    privacy_only=args.privacy_only,
-                    pack_allow=pack_allow,
-                )
+            archive_findings = scan_distribution(
+                archive, args.repo,
+                require_explicit_terms=args.require_explicit_terms,
+                privacy_only=args.privacy_only,
             )
-            for path, rules in pack_allow.items():
-                allow_list.setdefault(path, set()).update(rules)
-        findings, allowed_count = _apply_fixture_allow_list(
-            list(dict.fromkeys(findings)),
-            allow_list,
-            normalize_path=normalize_archive_member_path,
-        )
+            root = detect_archive_root(archive)
+            archive_findings, archive_allowed = _apply_fixture_allow_list(
+                list(dict.fromkeys(archive_findings)),
+                allow_list,
+                normalize_path=lambda path, root=root: normalize_archive_member_path(path, root),
+            )
+            findings.extend(archive_findings)
+            allowed_count += archive_allowed
+        findings = list(dict.fromkeys(findings))
     except RuntimeError as exc:
         print("Push Guard could not inspect the distribution.", file=sys.stderr)
         print(_display_metadata(str(exc)), file=sys.stderr)

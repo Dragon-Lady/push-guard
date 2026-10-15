@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `scan-package` allow lists are now scoped per archive, ignore any
+  `.push-guard-allow` embedded in the scanned artifact (only `--repo` is
+  trusted), and strip only a verified archive root (`package/` for npm,
+  filename-matched `{name}-{version}/` for sdists, nothing for wheels).
 - Honor a reviewed, rule-scoped `.push-guard-allow` in `scan-package` (and
   `push-guard scan`), with npm-pack `package/` and sdist wrap-dir path
   normalization, so detector catalogs can pass full-mode publish scans
