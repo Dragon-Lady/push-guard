@@ -393,17 +393,37 @@ python -m build
 push-guard scan-package --repo . --require-explicit-terms --min-terms 3 dist/*
 ```
 
-`scan-package` reads the built wheel and source archive without extracting
-them. It checks member paths and text content, including files such as review
-notes that may be included only in the source archive. Binary content is not
-decoded, including UTF-16 and text with a NUL near the start; nested archives
-are not opened. The `# push-guard: ignore` marker can suppress a private-term
-finding on a shipped text line, so review any intentional exceptions. Malformed
-and oversized archives stop the release. A clean Git push
-does not prove that a built package is clean, so run this check **before** the
-PyPI upload. Keep the private CI value out of command arguments and logs.
-Packages with intentional secret-shaped test fixtures can use `--privacy-only`
-to check private terms and paths without the other secret/workflow rules.
+`scan-package` reads the built wheel, source archive, or npm pack (`.tgz`)
+without extracting them. It checks member paths and text content, including
+files such as review notes that may be included only in the source archive.
+Binary content is not decoded, including UTF-16 and text with a NUL near the
+start; nested archives are not opened. The `# push-guard: ignore` marker can
+suppress a private-term finding on a shipped text line, so review any
+intentional exceptions. Malformed and oversized archives stop the release. A
+clean Git push does not prove that a built package is clean, so run this check
+**before** the PyPI or npm upload. Keep the private CI value out of command
+arguments and logs.
+
+Detector catalogs with intentional IOC strings can keep a reviewed
+`.push-guard-allow` at the package root instead of using `--privacy-only`.
+The same file is honored by `push-guard scan` and `scan-package`:
+
+```
+# Format: <path> rule-id,rule-id ...  (exact paths, exact workflow.* ids only)
+src/checker.js workflow.hades_github_token_monitor,workflow.trinitite_payload_marker
+```
+
+Personal, private-list, and private-path matches cannot be allowed. Wildcard
+rule ids and pseudo-paths are ignored. `scan-package` loads the file from
+`--repo` (the checkout used for private rules) and, if present, from
+`.push-guard-allow` inside the archive. Pack member paths are normalized
+before matching: a leading `package/` from npm pack and a single
+`{name}-{version}/` sdist prefix are stripped so repo-relative entries match.
+If the allow file is not shipped in the pack, pass `--repo` at the checkout
+that owns it. Allowed hits are printed as
+`Push Guard allowed N reviewed workflow hit(s).`
+Packages that still need a broader skip can use `--privacy-only` to check
+private terms and paths without the other secret/workflow rules.
 
 ## Install
 

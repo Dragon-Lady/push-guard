@@ -11,7 +11,8 @@ import sys
 import unicodedata
 import urllib.parse
 from dataclasses import dataclass
-from pathlib import Path
+from collections.abc import Callable
+from pathlib import Path, PurePosixPath
 
 
 ZERO_SHA = "0" * 40
@@ -486,8 +487,11 @@ SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template", ".env.dist
 
 PRIVATE_PATHS_CONFIG = ".push-guard-private-paths"
 BLOCKED_TERMS_CONFIG = ".push-guard-blocked-terms"
+ALLOW_LIST_CONFIG = ".push-guard-allow"
 USER_BLOCKED_TERMS = Path.home() / ".config" / "push-guard" / "blocked-terms"
 BLOCKED_TERMS_ENV = "PUSH_GUARD_BLOCKED_TERMS"
+_ALLOWABLE_RULE_ID = re.compile(r"^workflow\.[A-Za-z0-9_]+$")
+_PSEUDO_PATH = re.compile(r"^<[^<>]+>$")
 GENERIC_ACCOUNT_NAMES = {
     "root", "runner", "ubuntu", "user", "guest", "admin", "administrator",
     "nobody", "default", "localhost", "pop-os", "git", "dev",
@@ -603,6 +607,90 @@ def load_blocked_terms(repo: str | Path = ".") -> list[str]:
             seen.add(key)
             result.append(term)
     return result
+
+
+def load_fixture_allow_list(
+    repo: str | Path = ".",
+    *,
+    text: str | None = None,
+) -> dict[str, set[str]]:
+    """Load a reviewed, rule-scoped ``.push-guard-allow`` list.
+
+    Format: ``<path> rule-id,rule-id ...`` with exact repo-relative paths and
+    exact ``workflow.*`` rule ids. Personal, private-list, and private-path
+    matches cannot be allowed. Pseudo-paths and wildcard rule ids are ignored.
+    """
+    if text is None:
+        try:
+            text = (Path(repo) / ALLOW_LIST_CONFIG).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return {}
+    allow: dict[str, set[str]] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        path, rules_blob = parts
+        if not _is_exact_allow_path(path):
+            continue
+        for rule_id in rules_blob.split(","):
+            rule_id = rule_id.strip()
+            if not _ALLOWABLE_RULE_ID.fullmatch(rule_id):
+                continue
+            allow.setdefault(path, set()).add(rule_id)
+    return allow
+
+
+def _is_exact_allow_path(path: str) -> bool:
+    if not path or _PSEUDO_PATH.fullmatch(path):
+        return False
+    if path.startswith("<") or path.endswith(">"):
+        return False
+    if "\\" in path or path.startswith("/"):
+        return False
+    posix = PurePosixPath(path)
+    if posix.is_absolute() or ".." in posix.parts:
+        return False
+    if any(char in path for char in "*?["):
+        return False
+    return True
+
+
+def _apply_fixture_allow_list(
+    findings: list[SecretFinding],
+    allow_list: dict[str, set[str]],
+    *,
+    normalize_path: Callable[[str], str] | None = None,
+) -> tuple[list[SecretFinding], int]:
+    """Drop reviewed workflow hits listed in ``.push-guard-allow``.
+
+    Returns remaining findings and the number of allowed hits. Personal,
+    private, secret, and pseudo-path findings are never dropped.
+    """
+    remaining: list[SecretFinding] = []
+    allowed = 0
+    for finding in findings:
+        path = normalize_path(finding.path) if normalize_path else finding.path
+        if (
+            finding.rule_id.startswith("workflow.")
+            and _ALLOWABLE_RULE_ID.fullmatch(finding.rule_id)
+            and _is_exact_allow_path(path)
+            and finding.rule_id in allow_list.get(path, ())
+        ):
+            allowed += 1
+            continue
+        remaining.append(finding)
+    return remaining, allowed
+
+
+def _print_allowed_hits(allowed_count: int) -> None:
+    if allowed_count:
+        print(f"Push Guard allowed {allowed_count} reviewed workflow hit(s).")
 
 
 def _scan_line_for_blocked_terms(
@@ -1012,12 +1100,16 @@ def _scan_main(argv: list[str]) -> int:
 
     try:
         findings = scan_git_range(args.repo, args.base, args.head)
+        findings, allowed_count = _apply_fixture_allow_list(
+            findings, load_fixture_allow_list(args.repo)
+        )
     except RuntimeError as exc:
         print("Push Guard could not inspect this range.", file=sys.stderr)
         print(_display_metadata(str(exc)), file=sys.stderr)
         print("Blocking publication because inspection failed.", file=sys.stderr)
         return 1
 
+    _print_allowed_hits(allowed_count)
     if not findings:
         print(f"Push Guard found no blocking findings in {_display_metadata(args.base)}..{_display_metadata(args.head)}.")
         return 0
@@ -1036,14 +1128,14 @@ def _scan_main(argv: list[str]) -> int:
 
 
 def _scan_package_main(argv: list[str]) -> int:
-    from .package_scan import scan_distribution
+    from .package_scan import normalize_archive_member_path, scan_distribution
 
     parser = _GuardArgumentParser(
         prog="push-guard scan-package",
         description="Inspect built wheels and source archives before publication.",
     )
-    parser.add_argument("archives", nargs="+", help="Built .whl or .tar.gz files.")
-    parser.add_argument("--repo", default=".", help="Repository for private rules.")
+    parser.add_argument("archives", nargs="+", help="Built .whl, .tar.gz, or .tgz files.")
+    parser.add_argument("--repo", default=".", help="Repository for private rules and .push-guard-allow.")
     parser.add_argument(
         "--require-explicit-terms", action="store_true",
         help="Fail if no private blocked terms are configured (for CI releases).",
@@ -1065,26 +1157,37 @@ def _scan_package_main(argv: list[str]) -> int:
             print(f"Push Guard loaded {explicit_count} explicit private term(s).")
         if args.require_explicit_terms and explicit_count < args.min_terms:
             raise PushGuardInspectionError("too few explicit private terms for this release scan")
-        findings = [
-            finding
-            for archive in args.archives
-            for finding in scan_distribution(
-                archive, args.repo,
-                require_explicit_terms=args.require_explicit_terms,
-                privacy_only=args.privacy_only,
+        allow_list = load_fixture_allow_list(args.repo)
+        findings: list[SecretFinding] = []
+        for archive in args.archives:
+            pack_allow: dict[str, set[str]] = {}
+            findings.extend(
+                scan_distribution(
+                    archive, args.repo,
+                    require_explicit_terms=args.require_explicit_terms,
+                    privacy_only=args.privacy_only,
+                    pack_allow=pack_allow,
+                )
             )
-        ]
+            for path, rules in pack_allow.items():
+                allow_list.setdefault(path, set()).update(rules)
+        findings, allowed_count = _apply_fixture_allow_list(
+            list(dict.fromkeys(findings)),
+            allow_list,
+            normalize_path=normalize_archive_member_path,
+        )
     except RuntimeError as exc:
         print("Push Guard could not inspect the distribution.", file=sys.stderr)
         print(_display_metadata(str(exc)), file=sys.stderr)
         print("Blocking publication because inspection failed.", file=sys.stderr)
         return 1
+    _print_allowed_hits(allowed_count)
     if not findings:
         print(f"Push Guard found no blocking findings in {len(args.archives)} distribution(s).")
         return 0
     print("Push Guard blocked this distribution. Values are redacted.", file=sys.stderr)
     display_terms = load_blocked_terms(args.repo)
-    for finding in dict.fromkeys(findings):
+    for finding in findings:
         line_suffix = f":{finding.line}" if finding.line else ""
         print(
             f"- {finding.rule_id} at {_safe_private_metadata(finding.path, display_terms)}{line_suffix} "
