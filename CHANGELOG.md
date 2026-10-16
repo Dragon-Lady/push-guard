@@ -1,11 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 - release pending
 
-- `scan-package` allow lists are now scoped per archive, ignore any
-  `.push-guard-allow` embedded in the scanned artifact (only `--repo` is
-  trusted), and strip only a verified archive root (`package/` for npm,
-  filename-matched `{name}-{version}/` for sdists, nothing for wheels).
+- Fix: `scan-package` applies allow lists per archive, so an allow entry can
+  no longer suppress workflow hits in a different archive scanned in the same
+  command.
+- Fix: archive paths are normalized only by stripping a verified single root
+  (`package/` shared by every npm tarball member, or the `{name}-{version}/`
+  directory matching the sdist filename). Wheels are never stripped, so a
+  lookalike such as `evil-9/src/checker.js` no longer matches
+  `src/checker.js`.
+- Fix: a `.push-guard-allow` embedded in the scanned artifact is ignored;
+  only the reviewed `--repo` allow file is trusted. Personal, private, and
+  secret rules remain non-allowable.
 - Honor a reviewed, rule-scoped `.push-guard-allow` in `scan-package` (and
   `push-guard scan`), with npm-pack `package/` and sdist wrap-dir path
   normalization, so detector catalogs can pass full-mode publish scans
