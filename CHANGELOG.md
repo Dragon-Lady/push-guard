@@ -2,6 +2,14 @@
 
 ## 0.4.2 - release pending
 
+- Keep synthetic attack and credential fixtures in the repository test suite,
+  outside the published source archive. Mark three reviewed detector-description
+  lines with the existing non-secret exception and reword a triggering README
+  example without changing detection rules.
+- Scan built wheels and source archives in CI and before release artifact
+  upload.
+- Correct the landing-page FAQ: private-path patterns must be excluded from
+  Git before use; hook installation does not add that exclusion automatically.
 - Fix: `scan-package` applies allow lists per archive, so an allow entry can
   no longer suppress workflow hits in a different archive scanned in the same
   command.

@@ -494,9 +494,8 @@ python -m push_guard --repo /path/to/repo
 ## Known Limits
 
 - Pattern-based detection can miss secrets or flag non-secrets.
-- Long non-secret identifiers in assignments such as
-  `secret = mySuperLongFunctionCallHereWithNoSpaces` can match the generic
-  assignment rule.
+- Assigning a long non-secret identifier to a variable named `secret` can
+  match the generic assignment rule.
 - If a hook is installed from a Git subdirectory, Git may resolve `--repo` to a
   parent repository root. Push Guard canonicalizes the root before commit and
   private-path inspection; future path-relative features must preserve that

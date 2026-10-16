@@ -55,7 +55,7 @@
         "name": "Can I add private project paths without publishing their names?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. Put local patterns in the git-ignored .push-guard-private-paths file at the repository root."
+          "text": "Yes. First add /.push-guard-private-paths to .git/info/exclude or .gitignore and verify it with git check-ignore. Then put local patterns in .push-guard-private-paths at the repository root. Installation does not create this exclusion for you."
         }
       },
       {
@@ -357,7 +357,7 @@
       </details>
       <details>
         <summary>Can I add private project paths without publishing their names?</summary>
-        <p>Yes. Put local patterns in the git-ignored <code>.push-guard-private-paths</code> file at the repository root.</p>
+        <p>Yes. First add <code>/.push-guard-private-paths</code> to <code>.git/info/exclude</code> or <code>.gitignore</code> and verify it with <code>git check-ignore</code>. Then put local patterns in <code>.push-guard-private-paths</code> at the repository root. Installation does not create this exclusion for you.</p>
       </details>
       <details>
         <summary>Does it catch every personal name or address automatically?</summary>

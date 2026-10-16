@@ -178,7 +178,7 @@ AGENTJACKING_PATTERNS = [
     (
         "workflow.agentjacking_sentry_mcp_config",
         re.compile(r"\bsentry\b.*\bmcp\b|\bmcp\b.*\bsentry\b", re.I),
-        "Sentry MCP integration added or changed; review untrusted event-to-agent boundary",
+        "Sentry MCP integration added or changed; review untrusted event-to-agent boundary",  # push-guard: ignore
     ),
     (
         "workflow.agentjacking_sentry_resolution_npx",
@@ -188,7 +188,7 @@ AGENTJACKING_PATTERNS = [
     (
         "workflow.agentjacking_sentry_ingest_mcp",
         re.compile(r"(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn).{0,160}\bmcp\b|\bmcp\b.{0,160}(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn)", re.I),
-        "Sentry DSN/ingest surface is wired near MCP agent context",
+        "Sentry DSN/ingest surface is wired near MCP agent context",  # push-guard: ignore
     ),
 ]
 
@@ -363,7 +363,7 @@ DPRK_SOCKET_IO_LOADER_PATTERNS = [
     (
         "workflow.dprk_socketio_0001_stage",
         re.compile(r"\b0001\.dat\b", re.I),  # push-guard: ignore
-        "DPRK/Famous Chollima-style 0001.dat second-stage payload name",
+        "DPRK/Famous Chollima-style 0001.dat second-stage payload name",  # push-guard: ignore
     ),
     (
         "workflow.dprk_socketio_node_exec",

@@ -71,6 +71,8 @@ jobs:
           if artifacts != expected:
               raise SystemExit(f"unexpected distribution set: {artifacts!r}")
           PY
+      - name: Scan complete distributions
+        run: PYTHONPATH=src python -m push_guard scan-package --repo . dist/*
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
