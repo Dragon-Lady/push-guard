@@ -393,6 +393,11 @@ python -m build
 push-guard scan-package --repo . --require-explicit-terms --min-terms 3 dist/*
 ```
 
+The release workflow requires a multiline `PUSH_GUARD_BLOCKED_TERMS` secret
+in the GitHub `pypi` environment, with at least three distinct private terms.
+The full package scan runs before artifact upload and fails closed if that
+configuration is missing. Keep the term values out of source control.
+
 `scan-package` reads the built wheel, source archive, or npm pack (`.tgz`)
 without extracting them. It checks member paths and text content, including
 files such as review notes that may be included only in the source archive.

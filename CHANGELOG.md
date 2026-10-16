@@ -7,7 +7,8 @@
   lines with the existing non-secret exception and reword a triggering README
   example without changing detection rules.
 - Scan built wheels and source archives in CI and before release artifact
-  upload.
+  upload. The release scan requires the private-term environment secret and
+  at least three distinct explicit terms.
 - Correct the landing-page FAQ: private-path patterns must be excluded from
   Git before use; hook installation does not add that exclusion automatically.
 - Fix: `scan-package` applies allow lists per archive, so an allow entry can
