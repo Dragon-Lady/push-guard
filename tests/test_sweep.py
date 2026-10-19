@@ -26,7 +26,7 @@ TOKENS = {
     'sweep.openai_extended': 's' + 'k-proj-' + BODY + '_' + BODY,
     'sweep.slack_token': 'xo' + 'xb-' + BODY,
     'sweep.slack_webhook': 'https://hooks.slack.com/' + 'services/T1A2B3/C4D5E6/' + BODY,
-    'sweep.google_api_key': 'AI' + 'za' + BODY,
+    'sweep.google_api_key': 'AI' + 'za' + BODY + '_-9',
     'sweep.google_access_token': 'ya' + '29.' + BODY,
     'sweep.google_refresh_token': '1' + '//' + BODY,
     'sweep.npm_token': 'np' + 'm_' + BODY,

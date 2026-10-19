@@ -13,6 +13,7 @@ from push_guard.sweep import Cleaner, matches
 
 BODY = "aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY"
 CASES = [
+    ("google", "secret.google_api_key", "sweep.google_api_key"),
     ("proj", "secret.openai_token", "sweep.openai_extended"),
     ("svcacct", "secret.openai_token", "sweep.openai_extended"),
     ("admin", "secret.openai_token", "sweep.openai_extended"),
@@ -24,6 +25,8 @@ CASES = [
 
 
 def canary(kind):
+    if kind == "google":
+        return "AI" + "za" + (BODY + "_-9")[:35]
     return "s" + "k-" + kind + "-" + BODY + "_" + BODY + "-tail9"
 
 
@@ -63,7 +66,8 @@ def test_encoded_and_split_provider_shapes(kind, rule, sweep_rule, encoding):
 def test_full_match_redaction_and_metadata(kind, rule, sweep_rule):
     value = canary(kind)
     # Full body equality catches truncated matches and leaked suffixes.
-    assert list(matches(value)) == [(1, sweep_rule, "Anthropic" if "ant-" in kind else "OpenAI", value)]
+    label = "Google API key" if kind == "google" else "Anthropic" if "ant-" in kind else "OpenAI"
+    assert list(matches(value)) == [(1, sweep_rule, label, value)]
     assert Cleaner().text("prefix/" + value + ".txt") == "prefix/<redacted>.txt"
     finding = SecretFinding(rule, value + ".txt", 1, "reason: " + value, "<redacted>")
     assert finding.path == finding.reason == "<redacted>"
@@ -114,7 +118,7 @@ def test_legacy_openai_shape_still_detected():
 
 
 @pytest.mark.parametrize("prefix", ["identifier", "prefix-", "\u00e9"])
-@pytest.mark.parametrize("kind", ["proj", "svcacct", "admin", "ant-api03", "ant-admin01", "ant-oat01", "ant-ort01"])
+@pytest.mark.parametrize("kind", ["google", "proj", "svcacct", "admin", "ant-api03", "ant-admin01", "ant-oat01", "ant-ort01"])
 def test_extended_openai_does_not_match_inside_identifier(prefix, kind):
     value = prefix + canary(kind)
     assert scan_text_for_secrets(value) == []
@@ -198,7 +202,7 @@ def test_serialized_boundaries_detect_and_redact_complete_tokens(kind, prefix):
     from push_guard.guard import SECRET_PATTERNS
     value = 's' + 'k-' + BODY if kind == 'legacy' else canary(kind)
     text = prefix + value
-    rule = 'secret.anthropic_token' if kind.startswith('ant-') else 'secret.openai_token'
+    rule = 'secret.google_api_key' if kind == 'google' else 'secret.anthropic_token' if kind.startswith('ant-') else 'secret.openai_token'
     findings = scan_text_for_secrets(text, path=text)
     assert [f.rule_id for f in findings] == [rule]
     assert all(f.evidence == '<redacted>' and f.path == '<redacted>' for f in findings)
@@ -206,3 +210,18 @@ def test_serialized_boundaries_detect_and_redact_complete_tokens(kind, prefix):
     assert pattern.search(text).group() == value
     assert list(matches(text))[0][-1] == value
     assert BODY not in Cleaner().text(text)
+
+
+@pytest.mark.parametrize("prefix", ["", "_", r"\n", r"\t", "%3D", "?key=", "X-Goog-Api-Key: "])
+def test_google_serialized_boundaries(prefix):
+    value = canary("google")
+    assert len(value) == 39
+    assert [f.rule_id for f in scan_text_for_secrets(prefix + value)] == ["secret.google_api_key"]
+    assert value not in Cleaner().text(prefix + value)
+
+
+@pytest.mark.parametrize("length", [0, 19, 20, 34, 36, 50])
+def test_google_key_length_controls(length):
+    value = "AI" + "za" + (BODY * 3)[:length]
+    assert scan_text_for_secrets(value) == []
+    assert list(matches(value)) == []

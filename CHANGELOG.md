@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Detect Google API-key shapes in shared text, Git, package and metadata scans.
+  Sweep shares the exact-length rule and retains its existing report ID;
+  incomplete Google-like strings are no longer reported as API keys.
+  Shape matches do not verify credential validity.
+
 - Detect provider keys after serialized newline/tab/carriage-return escapes,
   URL-encoded separators and underscores while retaining word/hyphen boundaries.
 - Pre-push exceptions come from advertised destination base commits; a candidate

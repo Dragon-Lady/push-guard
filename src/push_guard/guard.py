@@ -40,6 +40,7 @@ PROVIDER_LEFT_BOUNDARY = (
     r"(?i:(?<=%3d)|(?<=%09)|(?<=%0a)|(?<=%0d)|(?<=%5f)))"
 )
 OPENAI_EXTENDED_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
+GOOGLE_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")
 
 # Each entry: (rule_id, pattern, reason, high_confidence)
 # high_confidence == True means the match is a provider-specific token *shape*
@@ -48,6 +49,12 @@ OPENAI_EXTENDED_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"sk-(?:proj|svcac
 # placeholder filter MUST NOT suppress it. Only low-confidence/structural
 # markers honor the placeholder filter.
 SECRET_PATTERNS = [
+    (
+        "secret.google_api_key",
+        GOOGLE_PATTERN,
+        "Google API key pattern (format only; validity not checked)",
+        True,
+    ),
     (
         "secret.gitlab_incoming_email_token",
         re.compile(r"(?<![A-Za-z0-9_])glimt-[A-Za-z0-9_-]{25}(?![A-Za-z0-9_])"),
