@@ -1,6 +1,34 @@
 # Changelog
 
-## 0.4.2 - release pending
+## Unreleased
+
+- Detect Google API-key shapes in shared text, Git, package and metadata scans.
+  Sweep shares the exact-length rule and retains its existing report ID;
+  incomplete Google-like strings are no longer reported as API keys.
+  Shape matches do not verify credential validity.
+
+- Detect provider keys after serialized newline/tab/carriage-return escapes,
+  URL-encoded separators and underscores while retaining word/hyphen boundaries.
+- Pre-push exceptions come from advertised destination base commits; a candidate
+  or dirty working copy cannot authorize its own workflow finding. Range scans
+  default to base policy and support an explicit immutable reviewed snapshot.
+
+- **Breaking change:** inline `# push-guard: ignore` markers no longer suppress
+  private-term or workflow findings. Repositories that relied on them may now
+  block pushes or distribution scans after upgrading; audit and migrate them
+  before installing this version. See the README upgrade notes.
+  Reviewed workflow fixtures must use the exact path/rule allow list; private
+  terms and secrets remain non-allowable.
+- Preserve the extended OpenAI token boundary and add Anthropic OAuth access
+  and refresh token shapes alongside API/admin formats.
+- Detect OpenAI project, service-account and admin keys and Anthropic API/admin
+  keys in the public text API, Git scans and package scans. Consume full
+  URL-safe token bodies when redacting metadata. These are shape checks, not
+  online credential validation.
+- Reuse the extended OpenAI shape in Sweep while preserving its existing
+  `sweep.openai_extended` rule ID and avoiding duplicate findings.
+
+## 0.4.2
 
 - Keep synthetic attack and credential fixtures in the repository test suite,
   outside the published source archive. Mark three reviewed detector-description

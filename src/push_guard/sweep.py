@@ -16,7 +16,8 @@ import tomllib
 from urllib.parse import unquote
 
 from .sweep_boundary import Budget, BudgetExceeded, MountSkipped, ScanFS
-from .guard import GENERIC_ASSIGNMENT, SECRET_PATTERNS, _value_is_placeholder
+from .guard import (GENERIC_ASSIGNMENT, GOOGLE_PATTERN, OPENAI_EXTENDED_PATTERN, SECRET_PATTERNS,
+                    _value_is_placeholder)
 from .sweep_safety import (MAX_BYTES, SafeError, Store, absolute, bounded_read,
                            directory_fd, fingerprint, write_private)
 
@@ -52,12 +53,13 @@ MAX_FINDINGS = 10_000
 MAX_TOTAL = 100 * 1024 * 1024
 MAX_SECONDS = 45
 
-# Existing provider definitions are reused without changing the hook's rule set.
+# Reuse the core provider shapes; retain the historical extended OpenAI report
+# rule ID so saved Sweep baselines and consumers remain compatible.
 EXTRA = [
-    ('sweep.openai_extended', re.compile(r'(?<![\w-])sk-(?:proj-|svcacct-)[A-Za-z0-9_-]{20,}'), 'OpenAI'),
+    ('sweep.openai_extended', OPENAI_EXTENDED_PATTERN, 'OpenAI'),
     ('sweep.slack_token', re.compile(r'\bxox[abpr]-[A-Za-z0-9-]{10,}'), 'Slack'),
     ('sweep.slack_webhook', re.compile(r'https://hooks\.slack\.com/services/[A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+'), 'Slack webhook'),
-    ('sweep.google_api_key', re.compile(r'\bAIza[A-Za-z0-9_-]{20,}'), 'Google API key'),
+    ('sweep.google_api_key', GOOGLE_PATTERN, 'Google API key'),
     ('sweep.google_access_token', re.compile(r'\bya29\.[A-Za-z0-9_-]{10,}'), 'Google access token'),
     ('sweep.google_refresh_token', re.compile(r'(?<![\w/])1//[A-Za-z0-9_-]{20,}'), 'Google refresh token'),
     ('sweep.npm_token', re.compile(r'\bnpm_[A-Za-z0-9]{16,}'), 'npm'),
@@ -66,7 +68,9 @@ EXTRA = [
     ('sweep.url_credentials', re.compile(r'https?://[^\s:/<>"\']+:[^\s@<>"\']+@[^\s/<>"\']+'), 'URL credentials'),
 ]
 TYPE_LABELS = {'secret.github_fine_grained_token': 'GitHub', 'secret.github_token': 'GitHub',
+               'secret.google_api_key': 'Google API key',
                'secret.gitlab_incoming_email_token': 'GitLab', 'secret.openai_token': 'OpenAI',
+               'secret.anthropic_token': 'Anthropic',
                'secret.aws_access_key': 'AWS access key', 'secret.private_key': 'Private key'}
 RULE_TYPES = {**TYPE_LABELS, **{rule: label for rule, _, label in EXTRA},
               'sweep.generic_assignment': 'Generic assignment',
@@ -126,9 +130,11 @@ def matches(text):
                     password = value.split('://', 1)[1].rsplit('@', 1)[0].split(':', 1)[1]
                     if placeholder(password) or password.lower() in {'example', 'changeme', 'dummy', 'password', 'pass'}:
                         continue
-                # Prefer the complete extended OpenAI shape over its prefix.
-                if rule == 'secret.openai_token' and re.match(r'sk-(?:proj-|svcacct-)', value):
+                # Emit one finding under the historical Sweep rule ID.
+                if rule == 'secret.openai_token' and OPENAI_EXTENDED_PATTERN.fullmatch(value):
                     continue
+                if rule == 'secret.google_api_key':
+                    continue  # Preserve Sweep's historical report ID below.
                 identity = (rule, value)
                 if identity not in seen:
                     seen.add(identity)

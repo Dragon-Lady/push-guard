@@ -7,6 +7,42 @@ matched values, and exits nonzero so Git blocks the push.
 
 > Built and maintained by Dragon Lady - [github.com/Dragon-Lady](https://github.com/Dragon-Lady) - X: [@answerislove2](https://x.com/answerislove2)
 
+## Upgrading from 0.4.2: breaking change
+
+Version 0.4.3 removes the inline `# push-guard: ignore` exception. An upgrade
+can start blocking pushes and packages that previously passed. Before upgrading
+shared hooks or CI installations, inspect each consuming repository:
+
+```sh
+git grep -n -i 'push-guard:[[:space:]]*ignore'
+```
+
+Review each match. Remove secrets and private material; neither can be exempted.
+For legitimate workflow/IOC fixtures, add only the reviewed, exact repository
+path and exact `workflow.*` rule IDs to `.push-guard-allow`. Inline markers are
+ordinary text now, including those in tests or documentation. Do not convert
+all marker lines into allowances automatically. Review any new allowance as a
+security-sensitive change.
+
+The pre-push hook reads exceptions from the destination's advertised base
+commit, never the working copy or candidate commits. A new or expanded
+allowance must be reviewed and established separately before it can exempt a
+later push. For a multi-ref push, only exceptions shared by every destination
+base apply. New refs without an advertised base receive no exceptions.
+
+`scan` likewise reads policy from `--base`. When auditing a larger historical
+range against a separately reviewed policy snapshot, explicitly pass
+`--allow-list-ref <reviewed-40-character-commit-SHA>`. This is an explicit trust
+decision by the caller; never substitute the unreviewed candidate's policy.
+`scan-package` continues to use the caller-selected `--repo` policy, outside
+the artifact. Supply a reviewed policy directory when scanning untrusted builds.
+
+Run the new version's `push-guard scan --base <trusted-base> --head HEAD` and
+`push-guard scan-package dist/*` against the actual outgoing changes and built
+artifacts before upgrading the installed hook. Archive member paths may differ
+from source paths; review those exact paths separately. Keep the existing
+installed version until the affected repositories have completed this migration.
+
 ## Website
 
 Public landing page: [push-guard.netlify.app](https://push-guard.netlify.app/)
@@ -262,7 +298,10 @@ by the package.
 - Aikido-reported Graphalgo Go modules and Terraform providers in `go.mod`,
   `go.sum`, `.tf`, and `.terraform.lock.hcl` dependency or provider declarations.
   The legitimate `kreuzwerker/docker` provider is not blocked.
-- OpenAI-style `sk-...` tokens
+- OpenAI-style legacy, project, service-account and admin tokens, including
+  URL-safe separators throughout the body
+- Anthropic-style API/admin and OAuth access/refresh tokens (`api03`, `admin01`,
+  `oat01` and `ort01` formats)
 - AWS access key IDs: `AKIA...` / `ASIA...`
 - private key block markers
 - generic long `api_key`, `token`, `secret`, or `password` assignments,
@@ -364,17 +403,17 @@ private list:
 
 One term or phrase per line. Added diff lines, paths, and commit and tag messages
 are scanned; matches are reported
-as `<redacted>`. The terms never enter Git or the published package. Use
-`# push-guard: ignore` on a line that must keep a term.
+as `<redacted>`. The terms never enter Git or the published package. Inline
+`# push-guard: ignore` comments do not suppress any findings.
 Set `PUSH_GUARD_INFER_IDENTITY=0` or pass `--no-infer` to omit inferred local
 identifiers while retaining your explicit private list. For a new branch or tag,
 the installed hook checks commits absent from tracking refs for that same Git
 remote. If it cannot identify trusted refs for the destination, it checks the
 full history.
 
-The marker can suppress local blocked-term and workflow/IOC findings, but it
-does **not** suppress provider token shapes or generic secret assignments. A
-comment must not turn a credential into an allowed value.
+Reviewed workflow fixtures use exact path/rule entries in `.push-guard-allow`.
+Secrets, private terms and private paths cannot be allowed. Scanned content
+cannot grant itself an exception through a comment.
 
 ```
 # .push-guard-blocked-terms  (gitignored)
@@ -402,9 +441,8 @@ configuration is missing. Keep the term values out of source control.
 without extracting them. It checks member paths and text content, including
 files such as review notes that may be included only in the source archive.
 Binary content is not decoded, including UTF-16 and text with a NUL near the
-start; nested archives are not opened. The `# push-guard: ignore` marker can
-suppress a private-term finding on a shipped text line, so review any
-intentional exceptions. Malformed and oversized archives stop the release. A
+start; nested archives are not opened. Inline ignore markers never suppress
+private-term, secret or workflow findings. Malformed and oversized archives stop the release. A
 clean Git push does not prove that a built package is clean, so run this check
 **before** the PyPI or npm upload. Keep the private CI value out of command
 arguments and logs.

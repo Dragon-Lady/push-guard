@@ -432,6 +432,10 @@ class PackageScanTests(unittest.TestCase):
             )
             git("add", ".")
             git("commit", "-qm", "detector")
+            base = git("rev-parse", "HEAD")
+            (root / "src" / "checker.js").write_text("watch " + "gh-token-" + "monitor persistence again\n")
+            git("add", ".")
+            git("commit", "-qm", "reviewed detector update")
             stdout = io.StringIO()
             with patch("sys.stdout", stdout), \
                  patch("push_guard.guard.USER_BLOCKED_TERMS", root / "missing"), \
