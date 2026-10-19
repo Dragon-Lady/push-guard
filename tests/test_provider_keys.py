@@ -1,4 +1,5 @@
 """Synthetic provider shapes across public scanning and redacted output paths."""
+import io
 import json
 import subprocess
 import zipfile
@@ -153,3 +154,35 @@ def test_archive_ignore_marker_cannot_hide_workflow_or_private_term(tmp_path, mo
     assert "workflow.shai_hulud_ssh_tmp" not in error
     assert "personal.blocked_term" in error
     assert private not in error
+
+
+def test_pre_push_allow_list_still_blocks_credentials_and_private_terms(tmp_path, monkeypatch, capsys):
+    def git(*args):
+        return subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git("init", "-q")
+    git("config", "user.name", "Dragon Lady")
+    git("config", "user.email", "268074749+Dragon-Lady@users.noreply.github.com")
+    git("commit", "--allow-empty", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    marker = "/tmp/" + ".sshu-" + "fixture"
+    (tmp_path / "fixture.py").write_text(marker + " # push-guard: ignore\n")
+    (tmp_path / ".push-guard-allow").write_text(
+        "fixture.py workflow.shai_hulud_ssh_tmp,personal.blocked_term,secret.openai_token\n")
+    git("add", ".")
+    git("commit", "-qm", "reviewed fixture")
+    private = "PrivateCanaryValue"
+    monkeypatch.setenv("PUSH_GUARD_BLOCKED_TERMS", private)
+    for with_secret in (False, True):
+        if with_secret:
+            (tmp_path / "fixture.py").write_text(marker + " " + private + " " + canary("proj") + " # push-guard: ignore\n")
+            git("add", ".")
+            git("commit", "-qm", "sensitive fixture")
+        head = git("rev-parse", "HEAD")
+        monkeypatch.setattr("sys.stdin", io.StringIO(f"refs/heads/main {head} refs/heads/main {base}\n"))
+        assert main(["--repo", str(tmp_path), "--no-infer"]) == int(with_secret)
+        out = capsys.readouterr()
+        assert "allowed 1 reviewed workflow hit(s)" in out.out
+        assert private not in out.err and BODY not in out.err
+        if with_secret:
+            assert "personal.blocked_term" in out.err and "secret.openai_token" in out.err

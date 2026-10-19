@@ -1043,12 +1043,16 @@ def _pre_push_main(argv: list[str]) -> int:
     stdin_text = sys.stdin.read()
     try:
         findings = scan_git_push(args.repo, stdin_text, args.remote_name)
+        findings, allowed_count = _apply_fixture_allow_list(
+            findings, load_fixture_allow_list(args.repo)
+        )
     except RuntimeError as exc:
         print("Push Guard could not inspect this push.", file=sys.stderr)
         print(_display_metadata(str(exc)), file=sys.stderr)
         print("Blocking push because inspection failed.", file=sys.stderr)
         return 1
 
+    _print_allowed_hits(allowed_count)
     if not findings:
         return 0
 
