@@ -197,7 +197,7 @@ def test_pre_push_allow_list_still_blocks_credentials_and_private_terms(tmp_path
 
 
 @pytest.mark.parametrize('kind', [c[0] for c in CASES] + ['legacy'])
-@pytest.mark.parametrize('prefix', [r'\n', r'\r', r'\t', 'key_', '%3D', '%3d', '%09', '%0A', '%0d', '%5F'])
+@pytest.mark.parametrize('prefix', [r'\n', r'\r', r'\t', 'key_', '%3D', '%3d', '%09', '%0A', '%0d', '%5F', r'\u003d', r'\u0022', r'\u0027', r'\u0009', r'\u000A', r'\u000d', r'\u0020', r'\u005f', r'\x3D', r'\x22', r'\x27', r'\x09', r'\x0a', r'\x0D', r'\x20', r'\x5F'])
 def test_serialized_boundaries_detect_and_redact_complete_tokens(kind, prefix):
     from push_guard.guard import SECRET_PATTERNS
     value = 's' + 'k-' + BODY if kind == 'legacy' else canary(kind)
@@ -225,3 +225,11 @@ def test_google_key_length_controls(length):
     value = "AI" + "za" + (BODY * 3)[:length]
     assert scan_text_for_secrets(value) == []
     assert list(matches(value)) == []
+
+
+@pytest.mark.parametrize("kind", [case[0] for case in CASES])
+@pytest.mark.parametrize("prefix", [r"\u0041", r"\x41", r"\u002d", r"\x2D", r"\u003", r"\x3", r"\u00220"])
+def test_encoded_identifier_characters_do_not_create_delimiters(kind, prefix):
+    text = prefix + canary(kind)
+    assert scan_text_for_secrets(text) == []
+    assert list(matches(text)) == []
