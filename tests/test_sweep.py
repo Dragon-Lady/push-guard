@@ -20,6 +20,7 @@ TOKENS = {
     'secret.github_fine_grained_token': 'github_' + 'pat_' + BODY,
     'secret.gitlab_incoming_email_token': 'gli' + 'mt-' + BODY[:25],
     'secret.openai_token': 's' + 'k-' + BODY,
+    'secret.anthropic_token': 's' + 'k-ant-api03-' + BODY + '_' + BODY + '-tail9',
     'secret.aws_access_key': 'A' + 'KIA' + AWS_BODY,
     'secret.private_key': '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----',
     'sweep.openai_extended': 's' + 'k-proj-' + BODY + '_' + BODY,
@@ -109,8 +110,10 @@ def test_provider_random_body_containing_test_is_not_suppressed(isolated_home, c
 
 @pytest.mark.parametrize('fmt', ['text', 'json', 'md', 'html'])
 @pytest.mark.parametrize('command', ['scan', 'report'])
-def test_canary_all_commands_formats_and_storage(command, fmt, isolated_home, capsys):
-    canary = TOKENS['secret.github_token']
+@pytest.mark.parametrize('rule', ['secret.github_token', 'sweep.openai_extended',
+                                 'secret.anthropic_token'])
+def test_canary_all_commands_formats_and_storage(rule, command, fmt, isolated_home, capsys):
+    canary = TOKENS[rule]
     write(isolated_home, '.bash_history', canary)
     # The same canary in metadata must be redacted too.
     write(isolated_home, canary + '/.env', 'TOKEN=' + canary)

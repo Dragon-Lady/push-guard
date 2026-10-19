@@ -262,7 +262,9 @@ by the package.
 - Aikido-reported Graphalgo Go modules and Terraform providers in `go.mod`,
   `go.sum`, `.tf`, and `.terraform.lock.hcl` dependency or provider declarations.
   The legitimate `kreuzwerker/docker` provider is not blocked.
-- OpenAI-style `sk-...` tokens
+- OpenAI-style legacy, project, service-account and admin tokens, including
+  URL-safe separators throughout the body
+- Anthropic-style API and admin tokens (`api03` and `admin01` formats)
 - AWS access key IDs: `AKIA...` / `ASIA...`
 - private key block markers
 - generic long `api_key`, `token`, `secret`, or `password` assignments,

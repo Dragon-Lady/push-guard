@@ -35,10 +35,14 @@ PLACEHOLDER_WORDS = {
     "your",
 }
 
+# Share the extended shape with Sweep so matching and metadata redaction
+# consume the entire value, including URL-safe separators in the body.
+OPENAI_EXTENDED_PATTERN = re.compile(r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
+
 # Each entry: (rule_id, pattern, reason, high_confidence)
 # high_confidence == True means the match is a provider-specific token *shape*
 # (ghp_, github_pat_, sk-, AKIA/ASIA). A value matching one of these is a real
-# secret even if it happens to contain a word like "test" or "your", so the
+# candidate even if it happens to contain a word like "test" or "your", so the
 # placeholder filter MUST NOT suppress it. Only low-confidence/structural
 # markers honor the placeholder filter.
 SECRET_PATTERNS = [
@@ -62,8 +66,14 @@ SECRET_PATTERNS = [
     ),
     (
         "secret.openai_token",
-        re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        re.compile(OPENAI_EXTENDED_PATTERN.pattern + r"|sk-[A-Za-z0-9]{20,}"),
         "OpenAI-style token pattern",
+        True,
+    ),
+    (
+        "secret.anthropic_token",
+        re.compile(r"sk-ant-(?:api03|admin01)-[A-Za-z0-9_-]{20,}"),
+        "Anthropic-style API or admin token pattern",
         True,
     ),
     (

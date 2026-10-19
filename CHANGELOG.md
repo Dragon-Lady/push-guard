@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Detect OpenAI project, service-account and admin keys and Anthropic API/admin
+  keys in the public text API, Git scans and package scans. Consume full
+  URL-safe token bodies when redacting metadata. These are shape checks, not
+  online credential validation.
+- Reuse the extended OpenAI shape in Sweep while preserving its existing
+  `sweep.openai_extended` rule ID and avoiding duplicate findings.
+
 ## 0.4.2 - release pending
 
 - Keep synthetic attack and credential fixtures in the repository test suite,
