@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Inline ignore markers no longer suppress private-term or workflow findings.
+- **Breaking change:** inline `# push-guard: ignore` markers no longer suppress
+  private-term or workflow findings. Repositories that relied on them may now
+  block pushes or distribution scans after upgrading; audit and migrate them
+  before installing this version. See the README upgrade notes.
   Reviewed workflow fixtures must use the exact path/rule allow list; private
   terms and secrets remain non-allowable.
 - Preserve the extended OpenAI token boundary and add Anthropic OAuth access

@@ -7,6 +7,29 @@ matched values, and exits nonzero so Git blocks the push.
 
 > Built and maintained by Dragon Lady - [github.com/Dragon-Lady](https://github.com/Dragon-Lady) - X: [@answerislove2](https://x.com/answerislove2)
 
+## Upgrading from 0.4.2: breaking change
+
+Version 0.4.3 removes the inline `# push-guard: ignore` exception. An upgrade
+can start blocking pushes and packages that previously passed. Before upgrading
+shared hooks or CI installations, inspect each consuming repository:
+
+```sh
+git grep -n -i 'push-guard:[[:space:]]*ignore'
+```
+
+Review each match. Remove secrets and private material; neither can be exempted.
+For legitimate workflow/IOC fixtures, add only the reviewed, exact repository
+path and exact `workflow.*` rule IDs to `.push-guard-allow`. Inline markers are
+ordinary text now, including those in tests or documentation. Do not convert
+all marker lines into allowances automatically. Review any new allowance as a
+security-sensitive change.
+
+Run the new version's `push-guard scan --base <trusted-base> --head HEAD` and
+`push-guard scan-package dist/*` against the actual outgoing changes and built
+artifacts before upgrading the installed hook. Archive member paths may differ
+from source paths; review those exact paths separately. Keep the existing
+installed version until the affected repositories have completed this migration.
+
 ## Website
 
 Public landing page: [push-guard.netlify.app](https://push-guard.netlify.app/)
