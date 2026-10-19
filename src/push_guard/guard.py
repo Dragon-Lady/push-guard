@@ -37,7 +37,9 @@ PLACEHOLDER_WORDS = {
 # zero-width prefix keeps complete token spans independent of separator text.
 PROVIDER_LEFT_BOUNDARY = (
     r"(?:(?<![^\W_])(?<!-)|(?<=\\[nrt])|"
-    r"(?i:(?<=%3d)|(?<=%09)|(?<=%0a)|(?<=%0d)|(?<=%5f)))"
+    r"(?i:(?<=\\u00(?:09|0a|0d|20|22|27|3d|5f))|"
+    r"(?<=\\x(?:09|0a|0d|20|22|27|3d|5f))|"
+    r"(?<=%3d)|(?<=%09)|(?<=%0a)|(?<=%0d)|(?<=%5f)))"
 )
 OPENAI_EXTENDED_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
 GOOGLE_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")

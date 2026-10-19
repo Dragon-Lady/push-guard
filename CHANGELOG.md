@@ -181,3 +181,9 @@
 - Pin GitHub Actions to immutable upstream commit SHAs.
 - Test, validate version/tag parity, and build distributions before passing a
   short-lived artifact to a separate PyPI Trusted Publishing job.
+
+### Serialized delimiter follow-up
+
+- Detect and fully redact provider keys after JSON Unicode or hexadecimal escapes
+  for whitespace, quotes, equals signs and underscores. Escaped identifier letters
+  and hyphens do not create boundaries. This does not decode entire key bodies.
