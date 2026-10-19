@@ -1109,6 +1109,7 @@ class PushGuardTests(unittest.TestCase):
             patch("push_guard.guard._scan_history_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_gitignored", return_value=[]),
+            patch("push_guard.guard.push_fixture_allow_list", return_value={}),
             patch(
                 "sys.stdin",
                 StringIO(
@@ -1169,6 +1170,7 @@ class PushGuardTests(unittest.TestCase):
             patch("push_guard.guard._scan_commit_messages", return_value=[]),
             patch("push_guard.guard._scan_tree_for_private_paths", return_value=[]),
             patch("push_guard.guard._scan_tree_for_gitignored", return_value=[]),
+            patch("push_guard.guard.push_fixture_allow_list", return_value={}),
             patch("push_guard.guard.load_private_path_patterns", return_value=[]),
         ):
             findings = scan_git_range(".", "origin/main", "HEAD")
@@ -1282,7 +1284,7 @@ class PushGuardTests(unittest.TestCase):
 
     def test_scan_command_reports_selected_clean_range(self):
         with (
-            patch("push_guard.guard.scan_git_range", return_value=[]),
+            patch("push_guard.guard.load_committed_fixture_allow_list", return_value={}), patch("push_guard.guard.scan_git_range", return_value=[]),
             patch("sys.stdout", new_callable=StringIO) as stdout,
         ):
             exit_code = main(["scan", "--repo", ".", "--base", "origin/main"])

@@ -33,7 +33,13 @@ PLACEHOLDER_WORDS = {
 
 # Share the extended shape with Sweep so matching and metadata redaction
 # consume the entire value, including URL-safe separators in the body.
-OPENAI_EXTENDED_PATTERN = re.compile(r"(?<![\w-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
+# Preserve identifier boundaries while accepting serialized delimiters. The
+# zero-width prefix keeps complete token spans independent of separator text.
+PROVIDER_LEFT_BOUNDARY = (
+    r"(?:(?<![^\W_])(?<!-)|(?<=\\[nrt])|"
+    r"(?i:(?<=%3d)|(?<=%09)|(?<=%0a)|(?<=%0d)|(?<=%5f)))"
+)
+OPENAI_EXTENDED_PATTERN = re.compile(PROVIDER_LEFT_BOUNDARY + r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
 
 # Each entry: (rule_id, pattern, reason, high_confidence)
 # high_confidence == True means the match is a provider-specific token *shape*
@@ -62,13 +68,13 @@ SECRET_PATTERNS = [
     ),
     (
         "secret.openai_token",
-        re.compile(OPENAI_EXTENDED_PATTERN.pattern + r"|(?<![\w-])sk-[A-Za-z0-9]{20,}"),
+        re.compile(OPENAI_EXTENDED_PATTERN.pattern + "|" + PROVIDER_LEFT_BOUNDARY + r"sk-[A-Za-z0-9]{20,}"),
         "OpenAI-style token pattern",
         True,
     ),
     (
         "secret.anthropic_token",
-        re.compile(r"(?<![\w-])sk-ant-(?:api03|admin01|oat01|ort01)-[A-Za-z0-9_-]{20,}"),
+        re.compile(PROVIDER_LEFT_BOUNDARY + r"sk-ant-(?:api03|admin01|oat01|ort01)-[A-Za-z0-9_-]{20,}"),
         "Anthropic-style API, admin or OAuth token pattern",
         True,
     ),
@@ -652,6 +658,41 @@ def load_fixture_allow_list(
     return allow
 
 
+def load_committed_fixture_allow_list(repo: str | Path, ref: str) -> dict[str, set[str]]:
+    """Read policy from a caller-trusted commit, never the candidate worktree."""
+    root = _resolve_git_root(Path(repo))
+    commit = _resolve_commit(root, ref)
+    entry = _run_git(root, ["ls-tree", "-z", commit, "--", ALLOW_LIST_CONFIG])
+    if not entry:
+        return {}
+    metadata, name = entry.rstrip("\0").split("\t", 1)
+    mode, kind, oid = metadata.split()
+    if name != ALLOW_LIST_CONFIG or kind != "blob" or mode not in {"100644", "100755"}:
+        return {}
+    return load_fixture_allow_list(text=_run_git(root, ["cat-file", "blob", oid]))
+
+
+def push_fixture_allow_list(repo: str | Path, stdin_text: str) -> dict[str, set[str]]:
+    """Only exceptions common to all destination bases can cover a multi-ref push.
+
+    New refs have no advertised base and receive no workflow exceptions. This
+    intentionally favors extra review over borrowing policy from another ref.
+    """
+    policies = []
+    for _, local_sha, _, remote_sha in _parse_pre_push(stdin_text):
+        if local_sha == ZERO_SHA:
+            continue
+        if remote_sha == ZERO_SHA:
+            return {}
+        policies.append(load_committed_fixture_allow_list(repo, remote_sha))
+    if not policies:
+        return {}
+    common = {path: set(rules) for path, rules in policies[0].items()}
+    for policy in policies[1:]:
+        common = {path: rules & policy.get(path, set()) for path, rules in common.items()}
+    return {path: rules for path, rules in common.items() if rules}
+
+
 def _is_exact_allow_path(path: str) -> bool:
     if not path or _PSEUDO_PATH.fullmatch(path):
         return False
@@ -1044,7 +1085,7 @@ def _pre_push_main(argv: list[str]) -> int:
     try:
         findings = scan_git_push(args.repo, stdin_text, args.remote_name)
         findings, allowed_count = _apply_fixture_allow_list(
-            findings, load_fixture_allow_list(args.repo)
+            findings, push_fixture_allow_list(args.repo, stdin_text)
         )
     except RuntimeError as exc:
         print("Push Guard could not inspect this push.", file=sys.stderr)
@@ -1103,15 +1144,18 @@ def _scan_main(argv: list[str]) -> int:
         default="HEAD",
         help="Candidate head ref. Defaults to HEAD.",
     )
+    parser.add_argument("--allow-list-ref", help="Explicit reviewed policy commit SHA; defaults to --base, not working files.")
     parser.add_argument("--no-infer", action="store_true", help="Do not infer the local login, display name, or host.")
     args = parser.parse_args(argv)
     if args.no_infer:
         os.environ["PUSH_GUARD_INFER_IDENTITY"] = "0"
 
     try:
+        if args.allow_list_ref and not re.fullmatch(r"[0-9a-fA-F]{40}", args.allow_list_ref):
+            raise PushGuardInspectionError("--allow-list-ref requires a reviewed 40-character commit SHA")
         findings = scan_git_range(args.repo, args.base, args.head)
         findings, allowed_count = _apply_fixture_allow_list(
-            findings, load_fixture_allow_list(args.repo)
+            findings, load_committed_fixture_allow_list(args.repo, args.allow_list_ref or args.base)
         )
     except RuntimeError as exc:
         print("Push Guard could not inspect this range.", file=sys.stderr)

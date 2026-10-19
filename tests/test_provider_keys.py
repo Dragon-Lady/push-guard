@@ -113,7 +113,7 @@ def test_legacy_openai_shape_still_detected():
     assert Cleaner().text(value) == "<redacted>"
 
 
-@pytest.mark.parametrize("prefix", ["identifier", "prefix-", "prefix_", "\u00e9"])
+@pytest.mark.parametrize("prefix", ["identifier", "prefix-", "\u00e9"])
 @pytest.mark.parametrize("kind", ["proj", "svcacct", "admin", "ant-api03", "ant-admin01", "ant-oat01", "ant-ort01"])
 def test_extended_openai_does_not_match_inside_identifier(prefix, kind):
     value = prefix + canary(kind)
@@ -171,6 +171,10 @@ def test_pre_push_allow_list_still_blocks_credentials_and_private_terms(tmp_path
         "fixture.py workflow.shai_hulud_ssh_tmp,personal.blocked_term,secret.openai_token\n")
     git("add", ".")
     git("commit", "-qm", "reviewed fixture")
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "fixture.py").write_text(marker + " # push-guard: ignore fixture update\n")
+    git("add", ".")
+    git("commit", "-qm", "fixture change")
     private = "PrivateCanaryValue"
     monkeypatch.setenv("PUSH_GUARD_BLOCKED_TERMS", private)
     for with_secret in (False, True):
@@ -186,3 +190,19 @@ def test_pre_push_allow_list_still_blocks_credentials_and_private_terms(tmp_path
         assert private not in out.err and BODY not in out.err
         if with_secret:
             assert "personal.blocked_term" in out.err and "secret.openai_token" in out.err
+
+
+@pytest.mark.parametrize('kind', [c[0] for c in CASES] + ['legacy'])
+@pytest.mark.parametrize('prefix', [r'\n', r'\r', r'\t', 'key_', '%3D', '%3d', '%09', '%0A', '%0d', '%5F'])
+def test_serialized_boundaries_detect_and_redact_complete_tokens(kind, prefix):
+    from push_guard.guard import SECRET_PATTERNS
+    value = 's' + 'k-' + BODY if kind == 'legacy' else canary(kind)
+    text = prefix + value
+    rule = 'secret.anthropic_token' if kind.startswith('ant-') else 'secret.openai_token'
+    findings = scan_text_for_secrets(text, path=text)
+    assert [f.rule_id for f in findings] == [rule]
+    assert all(f.evidence == '<redacted>' and f.path == '<redacted>' for f in findings)
+    pattern = next(p for r, p, _, _ in SECRET_PATTERNS if r == rule)
+    assert pattern.search(text).group() == value
+    assert list(matches(text))[0][-1] == value
+    assert BODY not in Cleaner().text(text)

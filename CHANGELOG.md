@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Detect provider keys after serialized newline/tab/carriage-return escapes,
+  URL-encoded separators and underscores while retaining word/hyphen boundaries.
+- Pre-push exceptions come from advertised destination base commits; a candidate
+  or dirty working copy cannot authorize its own workflow finding. Range scans
+  default to base policy and support an explicit immutable reviewed snapshot.
+
 - **Breaking change:** inline `# push-guard: ignore` markers no longer suppress
   private-term or workflow findings. Repositories that relied on them may now
   block pushes or distribution scans after upgrading; audit and migrate them

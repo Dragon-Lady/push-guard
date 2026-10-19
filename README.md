@@ -24,6 +24,19 @@ ordinary text now, including those in tests or documentation. Do not convert
 all marker lines into allowances automatically. Review any new allowance as a
 security-sensitive change.
 
+The pre-push hook reads exceptions from the destination's advertised base
+commit, never the working copy or candidate commits. A new or expanded
+allowance must be reviewed and established separately before it can exempt a
+later push. For a multi-ref push, only exceptions shared by every destination
+base apply. New refs without an advertised base receive no exceptions.
+
+`scan` likewise reads policy from `--base`. When auditing a larger historical
+range against a separately reviewed policy snapshot, explicitly pass
+`--allow-list-ref <reviewed-40-character-commit-SHA>`. This is an explicit trust
+decision by the caller; never substitute the unreviewed candidate's policy.
+`scan-package` continues to use the caller-selected `--repo` policy, outside
+the artifact. Supply a reviewed policy directory when scanning untrusted builds.
+
 Run the new version's `push-guard scan --base <trusted-base> --head HEAD` and
 `push-guard scan-package dist/*` against the actual outgoing changes and built
 artifacts before upgrading the installed hook. Archive member paths may differ
