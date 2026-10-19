@@ -17,13 +17,9 @@ from pathlib import Path, PurePosixPath
 
 ZERO_SHA = "0" * 40
 
-# Inline allowlist escape hatch for non-secret workflow/IOC rules. Provider
-# token shapes and generic secret assignments are still scanned on marked
-# lines: a comment must not turn a real credential into an allowed value. Use
-# this marker only on legitimate detector definitions, safe test structure, or
-# a deploy line that really does ssh-then-exec. It stays explicit and
-# grep-auditable on purpose.
-IGNORE_MARKER = re.compile(r"push-guard:\s*ignore", re.IGNORECASE)
+# Scanned content cannot grant itself an exception through an inline marker.
+# Reviewed workflow fixtures use exact path/rule entries in .push-guard-allow;
+# secret, personal and private-path findings are never allowable.
 
 PLACEHOLDER_WORDS = {
     "changeme",
@@ -37,7 +33,7 @@ PLACEHOLDER_WORDS = {
 
 # Share the extended shape with Sweep so matching and metadata redaction
 # consume the entire value, including URL-safe separators in the body.
-OPENAI_EXTENDED_PATTERN = re.compile(r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
+OPENAI_EXTENDED_PATTERN = re.compile(r"(?<![\w-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}")
 
 # Each entry: (rule_id, pattern, reason, high_confidence)
 # high_confidence == True means the match is a provider-specific token *shape*
@@ -66,14 +62,14 @@ SECRET_PATTERNS = [
     ),
     (
         "secret.openai_token",
-        re.compile(OPENAI_EXTENDED_PATTERN.pattern + r"|sk-[A-Za-z0-9]{20,}"),
+        re.compile(OPENAI_EXTENDED_PATTERN.pattern + r"|(?<![\w-])sk-[A-Za-z0-9]{20,}"),
         "OpenAI-style token pattern",
         True,
     ),
     (
         "secret.anthropic_token",
-        re.compile(r"sk-ant-(?:api03|admin01)-[A-Za-z0-9_-]{20,}"),
-        "Anthropic-style API or admin token pattern",
+        re.compile(r"(?<![\w-])sk-ant-(?:api03|admin01|oat01|ort01)-[A-Za-z0-9_-]{20,}"),
+        "Anthropic-style API, admin or OAuth token pattern",
         True,
     ),
     (
@@ -105,7 +101,7 @@ SHAI_HULUD_SSH_PATTERNS = [
     (
         "workflow.shai_hulud_ssh_tmp",
         re.compile(r"/tmp/\.sshu-[A-Za-z0-9_-]*", re.I),
-        "Hidden /tmp/.sshu-* SSH propagation artifact",  # push-guard: ignore
+        "Hidden /tmp/.sshu-* SSH propagation artifact",
     ),
     (
         "workflow.shai_hulud_ai_loader",
@@ -114,7 +110,7 @@ SHAI_HULUD_SSH_PATTERNS = [
     ),
     (
         "workflow.ssh_fanout_exec",
-        re.compile(r"\b(?:ssh|scp|rsync)\b.*\b(?:bun|node|sh|bash|curl|wget)\b", re.I),  # push-guard: ignore
+        re.compile(r"\b(?:ssh|scp|rsync)\b.*\b(?:bun|node|sh|bash|curl|wget)\b", re.I),
         "SSH fan-out combined with script/network execution",
     ),
     (
@@ -127,38 +123,38 @@ SHAI_HULUD_SSH_PATTERNS = [
 HADES_PYPI_PATTERNS = [
     (
         "workflow.hades_pypi_bun_download",
-        re.compile(r"oven-sh/bun/releases/download|bun-v\d+\.\d+\.\d+", re.I),  # push-guard: ignore
+        re.compile(r"oven-sh/bun/releases/download|bun-v\d+\.\d+\.\d+", re.I),
         "Hades/Miasma PyPI Bun runtime bootstrap marker",
     ),
     (
         "workflow.hades_pypi_bun_sentinel",
-        re.compile(r"\.bun_ran\b", re.I),  # push-guard: ignore
+        re.compile(r"\.bun_ran\b", re.I),
         "Hades/Miasma PyPI Bun startup sentinel",
     ),
     (
         "workflow.hades_anthropic_camouflage",
-        re.compile(r"api\.anthropic\.com/v1/api", re.I),  # push-guard: ignore
+        re.compile(r"api\.anthropic\.com/v1/api", re.I),
         "Hades/Miasma Anthropic-host camouflage endpoint",
     ),
     (
         "workflow.hades_github_exfil_marker",
         re.compile(
-            r"Hades - The End for the Damned|"  # push-guard: ignore
-            r"IfYouYankThisTokenItWillNukeTheComputerOfTheOwnerFully|"  # push-guard: ignore
-            r"results/results-[^\"'\s]*\.json|"  # push-guard: ignore
-            r"\bformat-results\b|"  # push-guard: ignore
-            r"\bRun Copilot\b",  # push-guard: ignore
+            r"Hades - The End for the Damned|"
+            r"IfYouYankThisTokenItWillNukeTheComputerOfTheOwnerFully|"
+            r"results/results-[^\"'\s]*\.json|"
+            r"\bformat-results\b|"
+            r"\bRun Copilot\b",
             re.I,
-        ),  # push-guard: ignore
+        ),
         "Hades/Miasma GitHub or Actions exfiltration marker",
     ),
     (
         "workflow.hades_github_token_monitor",
         re.compile(
-            r"gh-token-monitor|GitHub Commit Monitor|"  # push-guard: ignore
-            r"gh-token-monitor\.service|com\.github\.token-monitor\.plist",  # push-guard: ignore
+            r"gh-token-monitor|GitHub Commit Monitor|"
+            r"gh-token-monitor\.service|com\.github\.token-monitor\.plist",
             re.I,
-        ),  # push-guard: ignore
+        ),
         "Hades/Miasma GitHub token-monitor persistence marker",
     ),
     (
@@ -188,7 +184,7 @@ AGENTJACKING_PATTERNS = [
     (
         "workflow.agentjacking_sentry_mcp_config",
         re.compile(r"\bsentry\b.*\bmcp\b|\bmcp\b.*\bsentry\b", re.I),
-        "Sentry MCP integration added or changed; review untrusted event-to-agent boundary",  # push-guard: ignore
+        "Sentry MCP integration added or changed; review untrusted event-to-agent boundary",
     ),
     (
         "workflow.agentjacking_sentry_resolution_npx",
@@ -198,7 +194,7 @@ AGENTJACKING_PATTERNS = [
     (
         "workflow.agentjacking_sentry_ingest_mcp",
         re.compile(r"(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn).{0,160}\bmcp\b|\bmcp\b.{0,160}(?:ingest\.sentry\.io|SENTRY_DSN|sentry_dsn)", re.I),
-        "Sentry DSN/ingest surface is wired near MCP agent context",  # push-guard: ignore
+        "Sentry DSN/ingest surface is wired near MCP agent context",
     ),
 ]
 
@@ -276,9 +272,9 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
     (
         "workflow.trinitite_compromised_npm_version",
         re.compile(
-            r"[\"']@7nohe/openapi-react-query-codegen(?:@|[\"']\s*:\s*[\"'])"  # push-guard: ignore
+            r"[\"']@7nohe/openapi-react-query-codegen(?:@|[\"']\s*:\s*[\"'])"
             r"(?:0\.5\.[45]|1\.6\.[34]|2\.2\.[12]|3\.0\.[34]|"
-            r"0\.0\.0-(?:365d4eb738d3146583431948d3ba6e27a32556be|ec7876d6c917dad516ba69bbfafc948b834bf0ab))[\"']",  # push-guard: ignore
+            r"0\.0\.0-(?:365d4eb738d3146583431948d3ba6e27a32556be|ec7876d6c917dad516ba69bbfafc948b834bf0ab))[\"']",
             re.I,
         ),
         "Trinitite / Mini Shai-Hulud compromised npm package version appears in dependency metadata",
@@ -297,33 +293,33 @@ KNOWN_COMPROMISED_NPM_PACKAGE_PATTERNS = [
 SEPTEMBER_2026_THREAT_PATTERNS = [
     (
         "workflow.aurora_linux_ransomware_hash",
-        re.compile(r"a4af136d159a8eb96b54924fa80355ca52874913301300f55af7d67ae97edcfe", re.I),  # push-guard: ignore
+        re.compile(r"a4af136d159a8eb96b54924fa80355ca52874913301300f55af7d67ae97edcfe", re.I),
         "Aurora Linux/ESXi ransomware SHA-256",
     ),
     (
         "workflow.aurora_ransomware_download",
-        re.compile(r"pub-c057b7d0b24944a29e381ce9ea22a2f1\.r2(?:\[\.\]|\.)dev/xu4gid0t8er3\.out", re.I),  # push-guard: ignore
+        re.compile(r"pub-c057b7d0b24944a29e381ce9ea22a2f1\.r2(?:\[\.\]|\.)dev/xu4gid0t8er3\.out", re.I),
         "Aurora ransomware Cloudflare R2 payload URL",
     ),
     (
         "workflow.aurora_esxi_vm_kill",
-        re.compile(r"\besxcli\s+vm\s+process\s+kill\s+--type=force\s+--world-id", re.I),  # push-guard: ignore
+        re.compile(r"\besxcli\s+vm\s+process\s+kill\s+--type=force\s+--world-id", re.I),
         "Aurora-reported ESXi force-kill command shape",
     ),
     (
         "workflow.public_linux_kernel_lpe_poc",
-        re.compile(r"NebuSec/CyberMeowfia(?:/[^\s\"']*)?/Linux-CVE-2026-(?:80714|74597|74581|74480|72255|72137|68376|68162|64560|63834|52933|52929|52924|52923|52912|43502|43501|43074|43042|31678|31659|23274)", re.I),  # push-guard: ignore
+        re.compile(r"NebuSec/CyberMeowfia(?:/[^\s\"']*)?/Linux-CVE-2026-(?:80714|74597|74581|74480|72255|72137|68376|68162|64560|63834|52933|52929|52924|52923|52912|43502|43501|43074|43042|31678|31659|23274)", re.I),
         "Public September 2026 Linux kernel exploit-pack source in executable or configuration content",
     ),
     (
         "workflow.trinitite_payload_marker",
-        re.compile(r"Trinitite:\s*Sponsored by Preview 2 Effects|\b3FWCvzduYZg\.js\b|\bdoubletrinnys-", re.I),  # push-guard: ignore
+        re.compile(r"Trinitite:\s*Sponsored by Preview 2 Effects|\b3FWCvzduYZg\.js\b|\bdoubletrinnys-", re.I),
         "Trinitite / Mini Shai-Hulud payload or exfiltration marker",
     ),
 ]
 
 TRINITITE_COMMENT_PUBLISH_TRIGGER = re.compile(
-    r"github\.event\.comment\.body\s*==\s*[\"']npm publish[\"']", re.I  # push-guard: ignore
+    r"github\.event\.comment\.body\s*==\s*[\"']npm publish[\"']", re.I
 )
 
 ATOMIC_ARCH_AUR_PATTERNS = [
@@ -343,23 +339,23 @@ OTTERCOOKIE_NPM_PATTERNS = [
     (
         "workflow.ottercookie_vercel_c2",
         re.compile(
-            r"cloudflare(?:insights|firewall|security)(?:\[\.\]|\.)vercel(?:\[\.\]|\.)app",  # push-guard: ignore
+            r"cloudflare(?:insights|firewall|security)(?:\[\.\]|\.)vercel(?:\[\.\]|\.)app",
             re.I,
-        ),  # push-guard: ignore
+        ),
         "OtterCookie npm Vercel-hosted C2 domain",
     ),
     (
         "workflow.ottercookie_npm_package",
         re.compile(
-            r"\b(?:bjs-lint-builders|bjs-lint-builder|bjs-biginteger|"  # push-guard: ignore
-            r"hjs-lint-builders|sjs-builders|sjs-builder|npm-doc-builder)\b",  # push-guard: ignore
+            r"\b(?:bjs-lint-builders|bjs-lint-builder|bjs-biginteger|"
+            r"hjs-lint-builders|sjs-builders|sjs-builder|npm-doc-builder)\b",
             re.I,
-        ),  # push-guard: ignore
+        ),
         "Panther OtterCookie npm package indicator",
     ),
     (
         "workflow.ottercookie_ssh_backdoor_shape",
-        re.compile(r"authorized_keys|ufw\s+allow\s+22/tcp|/api/ssh-key", re.I),  # push-guard: ignore
+        re.compile(r"authorized_keys|ufw\s+allow\s+22/tcp|/api/ssh-key", re.I),
         "OtterCookie SSH key or firewall backdoor behavior",
     ),
 ]
@@ -367,13 +363,13 @@ OTTERCOOKIE_NPM_PATTERNS = [
 DPRK_SOCKET_IO_LOADER_PATTERNS = [
     (
         "workflow.dprk_socketio_service_fetch",
-        re.compile(r"/api/service", re.I),  # push-guard: ignore
+        re.compile(r"/api/service", re.I),
         "DPRK/Famous Chollima-style Socket.IO loader service path",
     ),
     (
         "workflow.dprk_socketio_0001_stage",
-        re.compile(r"\b0001\.dat\b", re.I),  # push-guard: ignore
-        "DPRK/Famous Chollima-style 0001.dat second-stage payload name",  # push-guard: ignore
+        re.compile(r"\b0001\.dat\b", re.I),
+        "DPRK/Famous Chollima-style 0001.dat second-stage payload name",
     ),
     (
         "workflow.dprk_socketio_node_exec",
@@ -412,7 +408,7 @@ ASTRO_CONFIG_C2_PATTERNS = [
         "workflow.astro_config_blockchain_c2",
         re.compile(
             r"trongrid|aptoslabs|bsc-dataseed|publicnode|eth_getTransactionByHash|"
-            r"Sec-V|TMfKQEd7TJJa5xNZJZ2Lep838vrzrs7mAP",  # push-guard: ignore
+            r"Sec-V|TMfKQEd7TJJa5xNZJZ2Lep838vrzrs7mAP",
             re.I,
         ),
         "Astro config contains blockchain/C2 relay marker",
@@ -706,7 +702,7 @@ def _print_allowed_hits(allowed_count: int) -> None:
 def _scan_line_for_blocked_terms(
     line: str, path: str, line_number: int, terms: list[str]
 ) -> list[SecretFinding]:
-    if not terms or IGNORE_MARKER.search(line):
+    if not terms:
         return []
     findings: list[SecretFinding] = []
     folded = line.casefold()
@@ -1324,7 +1320,6 @@ def _print_help() -> None:
 
 def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
-    skip_workflow_rules = bool(IGNORE_MARKER.search(line))
 
     for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
         for match in pattern.finditer(line):
@@ -1365,11 +1360,6 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
                     evidence="<redacted>",
                 )
             )
-
-    # The explicit marker only suppresses non-secret workflow/IOC rules. It
-    # cannot allow a provider token shape or generic secret assignment.
-    if skip_workflow_rules:
-        return findings
 
     findings.extend(_scan_line_for_workflow_compromise(line, path, line_number))
     findings.extend(_scan_line_for_hades_pypi(line, path, line_number))
@@ -1521,7 +1511,7 @@ def _scan_line_for_hades_pypi(
         and re.match(r"\s*import(?:\s|;)", line)
         and re.search(
             r"urllib\.request|urlretrieve|subprocess\.run|tempfile\.gettempdir|"
-            r"_index\.js|oven-sh/bun/releases/download|\.bun_ran|\bbun\s+run\b",  # push-guard: ignore
+            r"_index\.js|oven-sh/bun/releases/download|\.bun_ran|\bbun\s+run\b",
             line,
             re.I,
         )

@@ -994,7 +994,7 @@ class PushGuardTests(unittest.TestCase):
 
         self.assertEqual([], _scan_diff(diff_text))
 
-    def test_ignore_marker_suppresses_workflow_but_not_secret_rules(self):
+    def test_ignore_marker_cannot_suppress_workflow_or_secret_rules(self):
         token = "gh" + "p_" + ("A" * 36)
         temp_marker = "/tmp/" + ".sshu-x"
         runtime_call = "Bun." + "spawnSync"
@@ -1014,7 +1014,9 @@ class PushGuardTests(unittest.TestCase):
         findings = _scan_diff(diff_text)
         rule_ids = {finding.rule_id for finding in findings}
 
-        self.assertEqual({"secret.github_token"}, rule_ids)
+        self.assertIn("secret.github_token", rule_ids)
+        self.assertIn("workflow.shai_hulud_ssh_tmp", rule_ids)
+        self.assertIn("workflow.bun_tmp_exec", rule_ids)
 
     def test_ignore_marker_does_not_suppress_generic_secret_assignment(self):
         assigned_value = "A" * 32
@@ -1441,14 +1443,14 @@ class PushGuardTests(unittest.TestCase):
         self.assertEqual("<redacted>", findings[0].evidence)
         self.assertNotIn("given-name", findings[0].evidence)
 
-    def test_blocked_term_respects_ignore_marker(self):
+    def test_blocked_term_cannot_be_suppressed_by_ignore_marker(self):
         findings = _scan_line_for_blocked_terms(
             "given-name  # push-guard: ignore",
             "README.md",
             1,
             ["given-name"],
         )
-        self.assertEqual([], findings)
+        self.assertEqual(["personal.blocked_term"], [f.rule_id for f in findings])
 
     def test_blocked_term_matches_underscore_and_diff_path(self):
         self.assertEqual(1, len(_scan_line_for_blocked_terms(

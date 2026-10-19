@@ -17,6 +17,8 @@ CASES = [
     ("admin", "secret.openai_token", "sweep.openai_extended"),
     ("ant-api03", "secret.anthropic_token", "secret.anthropic_token"),
     ("ant-admin01", "secret.anthropic_token", "secret.anthropic_token"),
+    ("ant-oat01", "secret.anthropic_token", "secret.anthropic_token"),
+    ("ant-ort01", "secret.anthropic_token", "secret.anthropic_token"),
 ]
 
 
@@ -108,3 +110,46 @@ def test_legacy_openai_shape_still_detected():
     value = "s" + "k-" + BODY
     assert [f.rule_id for f in scan_text_for_secrets(value)] == ["secret.openai_token"]
     assert Cleaner().text(value) == "<redacted>"
+
+
+@pytest.mark.parametrize("prefix", ["identifier", "prefix-", "prefix_", "\u00e9"])
+@pytest.mark.parametrize("kind", ["proj", "svcacct", "admin", "ant-api03", "ant-admin01", "ant-oat01", "ant-ort01"])
+def test_extended_openai_does_not_match_inside_identifier(prefix, kind):
+    value = prefix + canary(kind)
+    assert scan_text_for_secrets(value) == []
+    assert list(matches(value)) == []
+
+
+@pytest.mark.parametrize("value", [
+    "flask-admin-dashboard-templates-and-static",
+    "risk-proj-management-plan-for-the-quarter-2026",
+    "desk-admin-workstation_configuration_notes",
+    "kiosk-ant-admin01-" + "x" * 32,
+    "https://example.com/disk-proj-build_artifacts_2026_10_19/index.html",
+    "desk-" + "a" * 32,
+])
+def test_ordinary_identifiers_are_not_provider_tokens(value):
+    assert scan_text_for_secrets(value) == []
+    assert list(matches(value)) == []
+
+
+def test_archive_ignore_marker_cannot_hide_workflow_or_private_term(tmp_path, monkeypatch, capsys):
+    marker = "/tmp/" + ".sshu-" + "fixture"
+    private = "PrivateCanaryValue"
+    archive = tmp_path / "fixture-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr("fixture.py", marker + " " + private + " # push-guard: ignore")
+    monkeypatch.setenv("PUSH_GUARD_BLOCKED_TERMS", private)
+    args = ["scan-package", "--repo", str(tmp_path), "--no-infer", str(archive)]
+    assert main(args) == 1
+    error = capsys.readouterr().err
+    assert "workflow.shai_hulud_ssh_tmp" in error
+    assert "personal.blocked_term" in error
+    assert private not in error
+    (tmp_path / ".push-guard-allow").write_text(
+        "fixture.py workflow.shai_hulud_ssh_tmp,personal.blocked_term\n")
+    assert main(args) == 1
+    error = capsys.readouterr().err
+    assert "workflow.shai_hulud_ssh_tmp" not in error
+    assert "personal.blocked_term" in error
+    assert private not in error

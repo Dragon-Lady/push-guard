@@ -264,7 +264,8 @@ by the package.
   The legitimate `kreuzwerker/docker` provider is not blocked.
 - OpenAI-style legacy, project, service-account and admin tokens, including
   URL-safe separators throughout the body
-- Anthropic-style API and admin tokens (`api03` and `admin01` formats)
+- Anthropic-style API/admin and OAuth access/refresh tokens (`api03`, `admin01`,
+  `oat01` and `ort01` formats)
 - AWS access key IDs: `AKIA...` / `ASIA...`
 - private key block markers
 - generic long `api_key`, `token`, `secret`, or `password` assignments,
@@ -366,17 +367,17 @@ private list:
 
 One term or phrase per line. Added diff lines, paths, and commit and tag messages
 are scanned; matches are reported
-as `<redacted>`. The terms never enter Git or the published package. Use
-`# push-guard: ignore` on a line that must keep a term.
+as `<redacted>`. The terms never enter Git or the published package. Inline
+`# push-guard: ignore` comments do not suppress any findings.
 Set `PUSH_GUARD_INFER_IDENTITY=0` or pass `--no-infer` to omit inferred local
 identifiers while retaining your explicit private list. For a new branch or tag,
 the installed hook checks commits absent from tracking refs for that same Git
 remote. If it cannot identify trusted refs for the destination, it checks the
 full history.
 
-The marker can suppress local blocked-term and workflow/IOC findings, but it
-does **not** suppress provider token shapes or generic secret assignments. A
-comment must not turn a credential into an allowed value.
+Reviewed workflow fixtures use exact path/rule entries in `.push-guard-allow`.
+Secrets, private terms and private paths cannot be allowed. Scanned content
+cannot grant itself an exception through a comment.
 
 ```
 # .push-guard-blocked-terms  (gitignored)
@@ -404,9 +405,8 @@ configuration is missing. Keep the term values out of source control.
 without extracting them. It checks member paths and text content, including
 files such as review notes that may be included only in the source archive.
 Binary content is not decoded, including UTF-16 and text with a NUL near the
-start; nested archives are not opened. The `# push-guard: ignore` marker can
-suppress a private-term finding on a shipped text line, so review any
-intentional exceptions. Malformed and oversized archives stop the release. A
+start; nested archives are not opened. Inline ignore markers never suppress
+private-term, secret or workflow findings. Malformed and oversized archives stop the release. A
 clean Git push does not prove that a built package is clean, so run this check
 **before** the PyPI or npm upload. Keep the private CI value out of command
 arguments and logs.

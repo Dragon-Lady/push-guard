@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Inline ignore markers no longer suppress private-term or workflow findings.
+  Reviewed workflow fixtures must use the exact path/rule allow list; private
+  terms and secrets remain non-allowable.
+- Preserve the extended OpenAI token boundary and add Anthropic OAuth access
+  and refresh token shapes alongside API/admin formats.
 - Detect OpenAI project, service-account and admin keys and Anthropic API/admin
   keys in the public text API, Git scans and package scans. Consume full
   URL-safe token bodies when redacting metadata. These are shape checks, not
@@ -9,7 +14,7 @@
 - Reuse the extended OpenAI shape in Sweep while preserving its existing
   `sweep.openai_extended` rule ID and avoiding duplicate findings.
 
-## 0.4.2 - release pending
+## 0.4.2
 
 - Keep synthetic attack and credential fixtures in the repository test suite,
   outside the published source archive. Mark three reviewed detector-description
