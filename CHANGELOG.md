@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 — 2026-10-19
 
 - Detect Google API-key shapes in shared text, Git, package and metadata scans.
   Sweep shares the exact-length rule and retains its existing report ID;

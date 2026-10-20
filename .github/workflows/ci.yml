@@ -47,3 +47,16 @@ jobs:
           python -m build --no-isolation
       - name: Scan complete distributions
         run: PYTHONPATH=src python -m push_guard scan-package --repo . dist/*
+
+  release-gate:
+    name: ${{ github.event_name == 'pull_request' && 'Release PR gate' || 'Release push validation' }}
+    if: always()
+    needs: [test, package]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require every test and package scan
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: test "$TEST_RESULT" = success && test "$PACKAGE_RESULT" = success
