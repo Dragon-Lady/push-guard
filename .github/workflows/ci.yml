@@ -49,8 +49,8 @@ jobs:
         run: PYTHONPATH=src python -m push_guard scan-package --repo . dist/*
 
   release-gate:
-    name: Release PR gate
-    if: github.event_name == 'pull_request' && always()
+    name: ${{ github.event_name == 'pull_request' && 'Release PR gate' || 'Release push validation' }}
+    if: always()
     needs: [test, package]
     runs-on: ubuntu-latest
     permissions: {}
