@@ -98,7 +98,7 @@
   <main id="main">
     <section class="hero" id="top" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source alpha · v0.4.3</p>
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open-source alpha · v0.4.4</p>
         <h1 id="hero-title">Stop the secret.<br><span>Keep the push.</span></h1>
         <p class="hero-subtitle">A local Git seatbelt for the moment before code leaves your machine.</p>
         <p class="hero-text">
@@ -297,7 +297,7 @@
           history. Start with the code. Verify the behavior. Use exact path-and-rule allowances only for workflow fixtures you have
           intentionally reviewed; secrets and private terms cannot be exempted.
         </p>
-        <p>Version 0.4.3 expands Google, OpenAI and Anthropic key detection and redaction, and prevents candidate changes from authorizing their own workflow exceptions. Breaking change: inline ignore markers no longer suppress findings. Follow the README migration notes before upgrading shared hooks.</p>
+        <p>Version 0.4.4 reads npm dependency metadata in context, recognizes integrity-bearing default-registry lock records, and separates local test commands from loader signals. Secret and private-data checks remain active. Upgrading from before 0.4.3? Follow the README migration notes for the removal of inline ignore markers.</p>
         <div class="proof-actions">
           <a class="button secondary" href="https://github.com/Dragon-Lady/push-guard/tree/main/tests" target="_blank" rel="noreferrer">Review the tests</a>
           <a class="button secondary" href="https://pypi.org/project/push-guard/" target="_blank" rel="noreferrer">View on PyPI</a>
@@ -306,12 +306,12 @@
       <div class="metric-grid" aria-label="Release evidence">
         <article>
           <span>Current release</span>
-          <strong>v0.4.3</strong>
+          <strong>v0.4.4</strong>
           <p>Tagged public package.</p>
         </article>
         <article>
           <span>Local test gate</span>
-          <strong>726 passed</strong>
+          <strong>767 passed</strong>
           <p>Plus 90 passing subtests in the release workflow.</p>
         </article>
         <article>

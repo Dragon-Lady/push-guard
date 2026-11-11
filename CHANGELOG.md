@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.4 — 2026-11-11
+
+- Parse npm manifests and lockfiles structurally for source-readiness checks.
+  Default HTTPS registry resolutions with valid integrity-hash shapes no longer
+  trigger remote-source findings. Funding links and dependency-owned npm engine
+  minima are not treated as Git sources or root npm selections.
+- Keep findings for off-registry URLs, missing or malformed integrity records,
+  real Git dependency specifications, old root npm selections and broad allow
+  flags. Malformed or duplicate-key JSON falls back to conservative checks.
+  Custom registry URLs remain reviewable; scanned configuration cannot silently
+  add a trusted registry.
+- Require nearby loader indicators or network/payload behavior for the generic
+  Node execution finding. Ordinary fixed local test commands no longer trigger
+  it by themselves; the specific service and stage indicators remain active.
+- Use each outgoing commit's complete file context for these context-dependent
+  rules, including deletion-only edits and findings removed before the final
+  commit. Secret/private-term checks still cover added lines, paths and metadata.
+- Route release dependency installation through Socket Firewall. No credential,
+  private-path or private-term exceptions are introduced.
+
 ## 0.4.3 — 2026-10-19
 
 - Detect Google API-key shapes in shared text, Git, package and metadata scans.
