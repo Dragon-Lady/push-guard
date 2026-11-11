@@ -43,7 +43,7 @@ jobs:
           python-version: "3.12"
       - name: Build sdist and wheel
         run: |
-          sfw pip install build==1.6.1 setuptools wheel
+          sfw pip install build==1.6.1 setuptools==84.2.1 wheel==0.48.0
           python -m build --no-isolation
       - name: Scan complete distributions
         run: PYTHONPATH=src python -m push_guard scan-package --repo . dist/*

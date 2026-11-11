@@ -7,6 +7,31 @@ matched values, and exits nonzero so Git blocks the push.
 
 > Built and maintained by Dragon Lady - [github.com/Dragon-Lady](https://github.com/Dragon-Lady) - X: [@answerislove2](https://x.com/answerislove2)
 
+## 0.4.4: dependency and loader context
+
+The npm readiness rules parse complete `package.json`, `package-lock.json` and
+`npm-shrinkwrap.json` documents. Git scans use the file from each outgoing
+commit, not the working tree. These rules recheck a changed file as a whole so
+removing an integrity field cannot hide an unsafe resolution on an unchanged
+line. Secrets and private terms continue to be checked on added lines.
+
+An HTTPS `registry.npmjs.org` lockfile resolution with a valid integrity-hash
+shape is ordinary registry metadata, not a direct remote-tarball dependency.
+This is a format check, not an online hash or package-safety verification.
+Off-registry sources and malformed/missing integrity records still require
+review. Custom registry hosts are not automatically trusted from repository
+configuration. Funding URLs are ignored by source-readiness rules; nested
+packages' npm engine minima are not root npm selections. Other secret and
+dependency-threat rules continue to inspect their content.
+
+The generic Node process-execution finding now needs loader indicators or
+network/payload behavior within 20 lines. Specific loader service/stage
+indicators remain active. This is a heuristic context window, not a JavaScript
+data-flow analysis; it cannot prove that an arbitrary script is safe.
+
+Malformed/duplicate-key JSON and non-JSON lock formats retain conservative
+line checks. No Form Twin-specific allowance or exemption is required.
+
 ## Upgrading from 0.4.2: breaking change
 
 Version 0.4.3 removes the inline `# push-guard: ignore` exception. An upgrade

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import fnmatch
 import getpass
+import json
 import os
 import re
 import socket
@@ -915,9 +918,9 @@ class PushGuardInspectionError(RuntimeError):
 
 
 def scan_text_for_secrets(text: str, path: str = "<text>") -> list[SecretFinding]:
-    findings: list[SecretFinding] = []
+    findings = _scan_content_rules(text, path)
     for line_number, line in enumerate(text.splitlines(), start=1):
-        findings.extend(_scan_line(line, path, line_number))
+        findings.extend(_scan_line(line, path, line_number, contextual=True))
     return findings
 
 
@@ -1375,7 +1378,7 @@ def _print_help() -> None:
     )
 
 
-def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
+def _scan_line(line: str, path: str, line_number: int, *, contextual: bool = False) -> list[SecretFinding]:
     findings: list[SecretFinding] = []
 
     for rule_id, pattern, reason, high_confidence in SECRET_PATTERNS:
@@ -1429,10 +1432,12 @@ def _scan_line(line: str, path: str, line_number: int) -> list[SecretFinding]:
     findings.extend(_scan_line_for_september_2026_threats(line, path, line_number))
     findings.extend(_scan_line_for_atomicarch_aur(line, path, line_number))
     findings.extend(_scan_line_for_ottercookie_npm(line, path, line_number))
-    findings.extend(_scan_line_for_dprk_socketio_loader(line, path, line_number))
+    if not contextual:
+        findings.extend(_scan_line_for_dprk_socketio_loader(line, path, line_number))
     findings.extend(_scan_line_for_astro_config_c2(line, path, line_number))
     findings.extend(_scan_line_for_openclaw_agent_exposure(line, path, line_number))
-    findings.extend(_scan_line_for_npm_v12_readiness(line, path, line_number))
+    if not contextual:
+        findings.extend(_scan_line_for_npm_v12_readiness(line, path, line_number))
 
     return findings
 
@@ -1892,7 +1897,7 @@ def _scan_line_for_ottercookie_npm(
 
 
 def _scan_line_for_dprk_socketio_loader(
-    line: str, path: str, line_number: int
+    line: str, path: str, line_number: int, *, loader_context: bool = False
 ) -> list[SecretFinding]:
     normalized_path = path.replace("\\", "/")
     lowered_path = normalized_path.lower()
@@ -1907,6 +1912,8 @@ def _scan_line_for_dprk_socketio_loader(
 
     findings: list[SecretFinding] = []
     for rule_id, pattern, reason in DPRK_SOCKET_IO_LOADER_PATTERNS:
+        if rule_id.endswith("_node_exec") and not loader_context:
+            continue
         if pattern.search(line):
             findings.append(
                 SecretFinding(
@@ -2132,6 +2139,169 @@ def _scan_line_for_npm_v12_readiness(
     return findings
 
 
+def _scan_npm_document(text: str, path: str) -> list[SecretFinding] | None:
+    """Classify dependency fields, never funding links or nested engine minima.
+
+    None requests conservative line checks for fragments or malformed metadata.
+    Registry exemptions are limited to lock records with a valid integrity shape;
+    repository configuration cannot silently trust a new registry host.
+    """
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name not in {"package.json", "package-lock.json", "npm-shrinkwrap.json"}:
+        return None
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate metadata key")
+            value[key] = item
+        return value
+
+    def invalid_constant(_):
+        raise ValueError("Non-JSON constant")
+
+    try:
+        document = json.loads(text, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+        if not isinstance(document, dict):
+            return None
+    except (ValueError, RecursionError):
+        return None
+
+    findings: list[SecretFinding] = []
+
+    def emit(rule: str, value: str, reason: str):
+        # This is a diagnostic position only; classification uses the parsed tree.
+        offset = text.find(json.dumps(value))
+        if offset < 0:
+            offset = text.find(json.dumps(value, ensure_ascii=False))
+        line = text.count("\n", 0, max(offset, 0)) + 1
+        findings.append(SecretFinding(f"workflow.npm_v12_{rule}", path, line, reason, "<redacted>"))
+
+    def registry_record(url: str, integrity) -> bool:
+        try:
+            parsed = urllib.parse.urlsplit(url)
+            registry = (parsed.scheme == "https" and parsed.hostname == "registry.npmjs.org"
+                        and parsed.port in {None, 443} and parsed.username is None
+                        and parsed.password is None and not parsed.query and not parsed.fragment)
+        except ValueError:
+            return False
+        if not registry or not isinstance(integrity, str):
+            return False
+        for token in integrity.split():
+            algorithm, _, encoded = token.partition("-")
+            sizes = {"sha1": 20, "sha256": 32, "sha384": 48, "sha512": 64}
+            if algorithm not in sizes:
+                continue
+            try:
+                if len(base64.b64decode(encoded, validate=True)) == sizes[algorithm]:
+                    return True
+            except (ValueError, binascii.Error):
+                pass
+        return False
+
+    def source(value, *, integrity=None, resolved=False):
+        if not isinstance(value, str):
+            raise ValueError("Dependency source must be a string")
+        if (re.match(r"^(?:git(?:\+[^:]+)?|github|gitlab|bitbucket):", value, re.I)
+                or re.match(r"^git@[^:]+:", value)
+                or re.fullmatch(r"[\w.-]+/[\w.-]+(?:#.*)?", value)
+                or re.match(r"^https?://[^/]+/.+\.git(?:#.*)?$", value, re.I)):
+            emit("git_dependency", value, "npm dependency uses a Git source; review explicit Git-source approval")
+        elif re.match(r"https?://", value, re.I):
+            if not (resolved and registry_record(value, integrity)):
+                emit("remote_tarball_dependency", value,
+                     "npm dependency uses a remote URL without a default-registry integrity record; review the source")
+
+    def sources(record):
+        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "requires"):
+            if key not in record:
+                continue
+            values = record[key]
+            if not isinstance(values, dict):
+                raise ValueError("Dependency map must be an object")
+            for value in values.values():
+                source(value)
+
+    def npm_version(value):
+        if isinstance(value, str):
+            match = re.search(r"\b(\d+\.\d+\.\d+)\b", value)
+            if match and _compare_dotted_version(match.group(1), NPM_V12_PREPARE_MIN_VERSION) < 0:
+                emit("old_npm_pin", value, "Root npm selection permits a version older than the npm v12 preparation baseline")
+
+    def root(record):
+        # Lockfile roots use requires: true; dependency records use a map.
+        sources({k: v for k, v in record.items() if k != "requires"})
+        manager = record.get("packageManager")
+        if isinstance(manager, str) and manager.startswith("npm@"):
+            npm_version(manager)
+        engines = record.get("engines", {})
+        if isinstance(engines, dict):
+            npm_version(engines.get("npm"))
+        dev = record.get("devEngines", {})
+        if isinstance(dev, dict):
+            managers = dev.get("packageManager", [])
+            if isinstance(managers, dict):
+                managers = [managers]
+            if isinstance(managers, list):
+                for item in managers:
+                    if isinstance(item, dict) and item.get("name") == "npm":
+                        npm_version(item.get("version"))
+
+    def locked(record, *, legacy=False):
+        if not isinstance(record, dict):
+            raise ValueError("Lock record must be an object")
+        if "resolved" in record:
+            source(record["resolved"], integrity=record.get("integrity"), resolved=True)
+        if "version" in record:
+            source(record["version"])
+        if legacy:
+            sources({k: v for k, v in record.items() if k != "dependencies"})
+            for child in record.get("dependencies", {}).values():
+                locked(child, legacy=True)
+        else:
+            sources(record)
+
+    try:
+        if name == "package.json":
+            root(document)
+        else:
+            # Legacy nested lock records coexist with packages in lockfile v2.
+            root({k: v for k, v in document.items() if k != "dependencies"})
+            packages = document.get("packages", {})
+            if not isinstance(packages, dict):
+                return None
+            for key, record in packages.items():
+                if not isinstance(record, dict):
+                    return None
+                root(record) if key == "" else locked(record)
+            legacy = document.get("dependencies", {})
+            if not isinstance(legacy, dict):
+                return None
+            for record in legacy.values():
+                locked(record, legacy=True)
+    except (ValueError, AttributeError, RecursionError):
+        return None
+    return list(dict.fromkeys(findings))
+
+
+def _scan_content_rules(text: str, path: str) -> list[SecretFinding]:
+    """Rules needing structural metadata or nearby executable-file context."""
+    lines = text.splitlines()
+    metadata = _scan_npm_document(text, path)
+    findings = list(metadata or [])
+    for index, line in enumerate(lines):
+        if metadata is None:
+            findings.extend(_scan_line_for_npm_v12_readiness(line, path, index + 1))
+        nearby = "\n".join(lines[max(0, index - 20):index + 21])
+        indicator = any(pattern.search(nearby) for _, pattern, _ in DPRK_SOCKET_IO_LOADER_PATTERNS[:2])
+        network = re.search(r"\b(?:fetch|axios(?:\.\w+)?|https?\.(?:get|request))\s*\(", nearby)
+        payload = re.search(r"\b(?:eval|writeFile(?:Sync)?|Function)\s*\(|\bvm\.|\.(?:text|arrayBuffer)\s*\(", nearby)
+        findings.extend(_scan_line_for_dprk_socketio_loader(
+            line, path, index + 1, loader_context=bool(indicator or (network and payload))))
+    return findings
+
+
 def _is_workflow_or_script_path(path: str) -> bool:
     lowered = path.lower()
     if lowered.endswith((".md", ".mdx", ".txt", ".rst")):
@@ -2273,7 +2443,7 @@ def _diffs_for_push_ref(repo: Path, local_sha: str, remote_sha: str, remote_name
             [
                 "show",
                 "--format=",
-                "--unified=0",
+                "--unified=2147483647",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
@@ -2297,8 +2467,20 @@ def _scan_diff(
     new_line = 0
     in_hunk = False
     terms = blocked_terms or []
+    content: dict[int, str] = {}
+    changed = False
+
+    def finish_file():
+        if changed and content:
+            # Full committed context comes from Git, never the working tree.
+            text = "\n".join(content.get(n, "") for n in range(1, max(content) + 1))
+            findings.extend(_scan_content_rules(text, current_path))
+
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
+            finish_file()
+            content = {}
+            changed = False
             current_path = "<diff>"
             in_hunk = False
             continue
@@ -2317,17 +2499,23 @@ def _scan_diff(
             continue
         if line.startswith("+"):
             body = line[1:]
-            findings.extend(_scan_line(body, current_path, max(new_line, 1)))
+            changed = True
+            content[max(new_line, 1)] = body
+            findings.extend(_scan_line(body, current_path, max(new_line, 1), contextual=True))
             findings.extend(
                 _scan_line_for_blocked_terms(body, current_path, max(new_line, 1), terms)
             )
             new_line += 1
             continue
-        if line.startswith("-") and not line.startswith("---"):
+        if line.startswith("-"):
+            changed = True
             continue
         if line.startswith("\\ No newline"):
             continue
+        if line.startswith(" "):
+            content[max(new_line, 1)] = line[1:]
         new_line += 1
+    finish_file()
     return findings
 
 
